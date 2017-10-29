@@ -89,6 +89,7 @@ class AuthorizationView(BaseAuthorizationView, FormView):
         initial_data = {
             "redirect_uri": self.oauth2_data.get("redirect_uri", None),
             "scope": " ".join(scopes),
+            "nonce": self.oauth2_data.get("nonce", None),
             "client_id": self.oauth2_data.get("client_id", None),
             "state": self.oauth2_data.get("state", None),
             "response_type": self.oauth2_data.get("response_type", None),
@@ -126,11 +127,15 @@ class AuthorizationView(BaseAuthorizationView, FormView):
             # TODO: Cache this!
             application = get_application_model().objects.get(client_id=credentials["client_id"])
 
+            uri_query = urlparse.urlparse(self.request.get_raw_uri()).query
+            uri_query_params = dict(urlparse.parse_qsl(uri_query, keep_blank_values=True, strict_parsing=True))
+
             kwargs["application"] = application
             kwargs["client_id"] = credentials["client_id"]
             kwargs["redirect_uri"] = credentials["redirect_uri"]
             kwargs["response_type"] = credentials["response_type"]
             kwargs["state"] = credentials["state"]
+            kwargs["nonce"] = uri_query_params.get('nonce', None)
 
             self.oauth2_data = kwargs
             # following two loc are here only because of https://code.djangoproject.com/ticket/17795
