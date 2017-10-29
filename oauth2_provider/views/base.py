@@ -1,6 +1,11 @@
 import json
 import logging
 
+try:
+    import urlparse
+except ImportError:
+    import urllib.parse as urlparse
+
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.http import HttpResponse
 from django.utils import timezone
@@ -105,11 +110,21 @@ class AuthorizationView(BaseAuthorizationView, FormView):
                 "state": form.cleaned_data.get("state", None),
             }
 
+            body = {
+                "nonce": form.cleaned_data.get("nonce")
+            }
+
             scopes = form.cleaned_data.get("scope")
             allow = form.cleaned_data.get("allow")
-            uri, headers, body, status = self.create_authorization_response(
-                request=self.request, scopes=scopes, credentials=credentials, allow=allow)
-            self.success_url = uri
+            redirect_uri, headers, body, status = self.create_authorization_response(
+                self.request.get_raw_uri(),
+                request=self.request,
+                scopes=scopes,
+                credentials=credentials,
+                body=body,
+                allow=allow
+            )
+            self.success_url = redirect_uri
             log.debug("Success url for the request: {0}".format(self.success_url))
             return self.redirect(self.success_url)
 
@@ -151,10 +166,13 @@ class AuthorizationView(BaseAuthorizationView, FormView):
             # This is useful for in-house applications-> assume an in-house applications
             # are already approved.
             if application.skip_authorization:
-                uri, headers, body, status = self.create_authorization_response(
-                    request=self.request, scopes=" ".join(scopes),
-                    credentials=credentials, allow=True)
-                return self.redirect(uri)
+                redirect_uri, headers, body, status = self.create_authorization_response(
+                    self.request.get_raw_uri(),
+                    request=self.request,
+                    scopes=" ".join(scopes),
+                    credentials=credentials,
+                    allow=True)
+                return HttpResponseUriRedirect(redirect_uri)
 
             elif require_approval == "auto":
                 tokens = get_access_token_model().objects.filter(
@@ -166,10 +184,13 @@ class AuthorizationView(BaseAuthorizationView, FormView):
                 # check past authorizations regarded the same scopes as the current one
                 for token in tokens:
                     if token.allow_scopes(scopes):
-                        uri, headers, body, status = self.create_authorization_response(
-                            request=self.request, scopes=" ".join(scopes),
-                            credentials=credentials, allow=True)
-                        return self.redirect(uri)
+                        redirect_uri, headers, body, status = self.create_authorization_response(
+                            self.request.get_raw_uri(),
+                            request=self.request,
+                            scopes=" ".join(scopes),
+                            credentials=credentials,
+                            allow=True)
+                        return HttpResponseUriRedirect(redirect_uri)
 
             return self.render_to_response(self.get_context_data(**kwargs))
 
