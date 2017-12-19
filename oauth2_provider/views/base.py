@@ -161,6 +161,8 @@ class AuthorizationView(BaseAuthorizationView, FormView):
             # a successful response depending on "approval_prompt" url parameter
             require_approval = request.GET.get("approval_prompt", oauth2_settings.REQUEST_APPROVAL_PROMPT)
 
+            allowed_schemes = oauth2_settings.ALLOWED_REDIRECT_URI_SCHEMES
+
             # If skip_authorization field is True, skip the authorization screen even
             # if this is the first use of the application and there was no previous authorization.
             # This is useful for in-house applications-> assume an in-house applications
@@ -172,7 +174,7 @@ class AuthorizationView(BaseAuthorizationView, FormView):
                     scopes=" ".join(scopes),
                     credentials=credentials,
                     allow=True)
-                return HttpResponseUriRedirect(redirect_uri)
+                return HttpResponseUriRedirect(redirect_uri, allowed_schemes)
 
             elif require_approval == "auto":
                 tokens = get_access_token_model().objects.filter(
@@ -190,7 +192,7 @@ class AuthorizationView(BaseAuthorizationView, FormView):
                             scopes=" ".join(scopes),
                             credentials=credentials,
                             allow=True)
-                        return HttpResponseUriRedirect(redirect_uri)
+                        return HttpResponseUriRedirect(redirect_uri, allowed_schemes)
 
             return self.render_to_response(self.get_context_data(**kwargs))
 
