@@ -4,7 +4,7 @@ Settings
 Our configurations are all namespaced under the `OAUTH2_PROVIDER` settings with the exception of
 `OAUTH2_PROVIDER_APPLICATION_MODEL, OAUTH2_PROVIDER_ACCESS_TOKEN_MODEL, OAUTH2_PROVIDER_GRANT_MODEL,
 OAUTH2_PROVIDER_REFRESH_TOKEN_MODEL`: this is because of the way Django currently implements
-swappable models. See issue #90 (https://github.com/evonove/django-oauth-toolkit/issues/90) for details.
+swappable models. See issue #90 (https://github.com/jazzband/django-oauth-toolkit/issues/90) for details.
 
 For example:
 
@@ -46,6 +46,10 @@ Default: ``["http", "https"]``
 
 A list of schemes that the ``redirect_uri`` field will be validated against.
 Setting this to ``["https"]`` only in production is strongly recommended.
+
+Note that you may override ``Application.get_allowed_schemes()`` to set this on
+a per-application basis.
+
 
 APPLICATION_MODEL
 ~~~~~~~~~~~~~~~~~
@@ -100,6 +104,16 @@ REFRESH_TOKEN_EXPIRE_SECONDS
 The number of seconds before a refresh token gets removed from the database by
 the ``cleartokens`` management command. Check :ref:`cleartokens` management command for further info.
 
+REFRESH_TOKEN_GRACE_PERIOD_SECONDS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The number of seconds between when a refresh token is first used when it is
+expired. The most common case of this for this is native mobile applications
+that run into issues of network connectivity during the refresh cycle and are
+unable to complete the full request/response life cycle. Without a grace
+period the application, the app then has only a consumed refresh token and the
+only recourse is to have the user re-authenticate. A suggested value, if this
+is enabled, is 2 minutes.
+
 REFRESH_TOKEN_MODEL
 ~~~~~~~~~~~~~~~~~~~
 The import string of the class (model) representing your refresh tokens. Overwrite
@@ -151,6 +165,11 @@ WRITE_SCOPE
 .. note:: (0.12.0+) Only used if `SCOPES_BACKEND_CLASS` is set to the SettingsScopes default.
 
 The name of the *write* scope.
+
+ERROR_RESPONSE_WITH_SCOPES
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+When authorization fails due to insufficient scopes include the required scopes in the response.
+Only applicable when used with `Django REST Framework <http://django-rest-framework.org/>`_
 
 RESOURCE_SERVER_INTROSPECTION_URL
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

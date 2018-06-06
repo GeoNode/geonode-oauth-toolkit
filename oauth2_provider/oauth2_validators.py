@@ -6,14 +6,17 @@ import json
 import hashlib
 import logging
 from datetime import datetime, timedelta
+from collections import OrderedDict
 
 import requests
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
+from django.db.models import Q
 from django.utils import dateformat, timezone
 from django.utils.timezone import make_aware
+from django.utils.translation import ugettext_lazy as _
 from oauthlib.oauth2 import RequestValidator
 from oauthlib.oauth2.rfc6749 import utils
 
@@ -108,7 +111,11 @@ class OAuth2Validator(RequestValidator):
             )
             return False
 
-        client_id, client_secret = map(unquote_plus, auth_string_decoded.split(":", 1))
+        try:
+            client_id, client_secret = map(unquote_plus, auth_string_decoded.split(":", 1))
+        except ValueError:
+            log.debug("Failed basic auth, Invalid base64 encoding.")
+            return False
 
         if self._load_application(client_id, request) is None:
             log.debug("Failed basic auth: Application %s does not exist" % client_id)
@@ -166,6 +173,30 @@ class OAuth2Validator(RequestValidator):
         except Application.DoesNotExist:
             log.debug("Failed body authentication: Application %r does not exist" % (client_id))
             return None
+
+    def _set_oauth2_error_on_request(self, request, access_token, scopes):
+        if access_token is None:
+            error = OrderedDict([
+                ("error", "invalid_token", ),
+                ("error_description", _("The access token is invalid."), ),
+            ])
+        elif access_token.is_expired():
+            error = OrderedDict([
+                ("error", "invalid_token", ),
+                ("error_description", _("The access token has expired."), ),
+            ])
+        elif not access_token.allow_scopes(scopes):
+            error = OrderedDict([
+                ("error", "insufficient_scope", ),
+                ("error_description", _("The access token is valid but does not have enough scope."), ),
+            ])
+        else:
+            log.warning("OAuth2 access token is invalid for an unknown reason.")
+            error = OrderedDict([
+                ("error", "invalid_token", ),
+            ])
+        request.oauth2_error = error
+        return request
 
     def client_authentication_required(self, request, *args, **kwargs):
         """
@@ -253,12 +284,37 @@ class OAuth2Validator(RequestValidator):
     def get_default_redirect_uri(self, client_id, request, *args, **kwargs):
         return request.client.default_redirect_uri
 
-    def _get_token_from_authentication_server(self, token, introspection_url, introspection_token):
-        bearer = "Bearer {}".format(introspection_token)
+    def _get_token_from_authentication_server(
+            self, token, introspection_url, introspection_token, introspection_credentials
+    ):
+        """Use external introspection endpoint to "crack open" the token.
+        :param introspection_url: introspection endpoint URL
+        :param introspection_token: Bearer token
+        :param introspection_credentials: Basic Auth credentials (id,secret)
+        :return: :class:`models.AccessToken`
+
+        Some RFC 7662 implementations (including this one) use a Bearer token while others use Basic
+        Auth. Depending on the external AS's implementation, provide either the introspection_token
+        or the introspection_credentials.
+
+        If the resulting access_token identifies a username (e.g. Authorization Code grant), add
+        that user to the UserModel. Also cache the access_token up until its expiry time or a
+        configured maximum time.
+
+        """
+        headers = None
+        if introspection_token:
+            headers = {"Authorization": "Bearer {}".format(introspection_token)}
+        elif introspection_credentials:
+            client_id = introspection_credentials[0].encode("utf-8")
+            client_secret = introspection_credentials[1].encode("utf-8")
+            basic_auth = base64.b64encode(client_id + b":" + client_secret)
+            headers = {"Authorization": "Basic {}".format(basic_auth.decode("utf-8"))}
+
         try:
             response = requests.post(
                 introspection_url,
-                data={"token": token}, headers={"Authorization": bearer}
+                data={"token": token}, headers=headers
             )
         except requests.exceptions.RequestException:
             log.exception("Introspection: Failed POST to %r in token lookup", introspection_url)
@@ -318,16 +374,18 @@ class OAuth2Validator(RequestValidator):
 
         introspection_url = oauth2_settings.RESOURCE_SERVER_INTROSPECTION_URL
         introspection_token = oauth2_settings.RESOURCE_SERVER_AUTH_TOKEN
+        introspection_credentials = oauth2_settings.RESOURCE_SERVER_INTROSPECTION_CREDENTIALS
 
         try:
             access_token = AccessToken.objects.select_related("application", "user").get(token=token)
             # if there is a token but invalid then look up the token
-            if introspection_url and introspection_token:
+            if introspection_url and (introspection_token or introspection_credentials):
                 if not access_token.is_valid(scopes):
                     access_token = self._get_token_from_authentication_server(
                         token,
                         introspection_url,
-                        introspection_token
+                        introspection_token,
+                        introspection_credentials
                     )
             if access_token and access_token.is_valid(scopes):
                 request.client = access_token.application
@@ -337,18 +395,19 @@ class OAuth2Validator(RequestValidator):
                 # this is needed by django rest framework
                 request.access_token = access_token
                 return True
-
+            self._set_oauth2_error_on_request(request, access_token, scopes)
             return False
         except AccessToken.DoesNotExist:
             import traceback
             traceback.print_exc()
 
             # there is no initial token, look up the token
-            if introspection_url and introspection_token:
+            if introspection_url and (introspection_token or introspection_credentials):
                 access_token = self._get_token_from_authentication_server(
                     token,
                     introspection_url,
-                    introspection_token
+                    introspection_token,
+                    introspection_credentials
                 )
                 if access_token and access_token.is_valid(scopes):
                     request.client = access_token.application
@@ -358,6 +417,7 @@ class OAuth2Validator(RequestValidator):
                     # this is needed by django rest framework
                     request.access_token = access_token
                     return True
+            self._set_oauth2_error_on_request(request, None, scopes)
             return False
 
     def validate_code(self, client_id, code, client, request, *args, **kwargs):
@@ -494,24 +554,43 @@ class OAuth2Validator(RequestValidator):
 
             # else create fresh with access & refresh tokens
             else:
-                # revoke existing tokens if possible
+                # revoke existing tokens if possible to allow reuse of grant
                 if isinstance(refresh_token_instance, RefreshToken):
+                    previous_access_token = AccessToken.objects.filter(
+                        source_refresh_token=refresh_token_instance
+                    ).first()
                     try:
                         refresh_token_instance.revoke()
                     except (AccessToken.DoesNotExist, RefreshToken.DoesNotExist):
                         pass
                     else:
                         setattr(request, "refresh_token_instance", None)
+                else:
+                    previous_access_token = None
 
-                access_token = self._create_access_token(expires, request, token)
+                # If the refresh token has already been used to create an
+                # access token (ie it's within the grace period), return that
+                # access token
+                if not previous_access_token:
+                    access_token = self._create_access_token(
+                        expires,
+                        request,
+                        token,
+                        source_refresh_token=refresh_token_instance,
+                    )
 
-                refresh_token = RefreshToken(
-                    user=request.user,
-                    token=refresh_token_code,
-                    application=request.client,
-                    access_token=access_token
-                )
-                refresh_token.save()
+                    refresh_token = RefreshToken(
+                        user=request.user,
+                        token=refresh_token_code,
+                        application=request.client,
+                        access_token=access_token
+                    )
+                    refresh_token.save()
+                else:
+                    # make sure that the token data we're returning matches
+                    # the existing token
+                    token["access_token"] = previous_access_token.token
+                    token["scope"] = previous_access_token.scope
 
         # No refresh token should be created, just access token
         else:
@@ -520,13 +599,14 @@ class OAuth2Validator(RequestValidator):
         # TODO: check out a more reliable way to communicate expire time to oauthlib
         token["expires_in"] = oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS
 
-    def _create_access_token(self, expires, request, token):
+    def _create_access_token(self, expires, request, token, source_refresh_token=None):
         access_token = AccessToken(
             user=request.user,
             scope=token["scope"],
             expires=expires,
             token=token["access_token"],
-            application=request.client
+            application=request.client,
+            source_refresh_token=source_refresh_token,
         )
         access_token.save()
         return access_token
@@ -569,6 +649,9 @@ class OAuth2Validator(RequestValidator):
         # Avoid second query for RefreshToken since this method is invoked *after*
         # validate_refresh_token.
         rt = request.refresh_token_instance
+        if not rt.access_token_id:
+            return AccessToken.objects.get(source_refresh_token_id=rt.id).scope
+
         return rt.access_token.scope
 
     def validate_refresh_token(self, refresh_token, client, request, *args, **kwargs):
@@ -576,16 +659,22 @@ class OAuth2Validator(RequestValidator):
         Check refresh_token exists and refers to the right client.
         Also attach User instance to the request object
         """
-        try:
-            rt = RefreshToken.objects.get(token=refresh_token)
-            request.user = rt.user
-            request.refresh_token = rt.token
-            # Temporary store RefreshToken instance to be reused by get_original_scopes.
-            request.refresh_token_instance = rt
-            return rt.application == client
 
-        except RefreshToken.DoesNotExist:
+        null_or_recent = Q(revoked__isnull=True) | Q(
+            revoked__gt=timezone.now() - timedelta(
+                seconds=oauth2_settings.REFRESH_TOKEN_GRACE_PERIOD_SECONDS
+            )
+        )
+        rt = RefreshToken.objects.filter(null_or_recent, token=refresh_token).first()
+
+        if not rt:
             return False
+
+        request.user = rt.user
+        request.refresh_token = rt.token
+        # Temporary store RefreshToken instance to be reused by get_original_scopes and save_bearer_token.
+        request.refresh_token_instance = rt
+        return rt.application == client
 
     @transaction.atomic
     def _save_id_token(self, token, request, expires, *args, **kwargs):

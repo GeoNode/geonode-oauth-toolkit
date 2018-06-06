@@ -97,6 +97,9 @@ class AbstractApplication(models.Model):
     class Meta:
         abstract = True
 
+    def __str__(self):
+        return self.name or self.client_id
+
     @property
     def default_redirect_uri(self):
         """
@@ -146,8 +149,12 @@ class AbstractApplication(models.Model):
     def get_absolute_url(self):
         return reverse("oauth2_provider:detail", args=[str(self.id)])
 
-    def __str__(self):
-        return self.name or self.client_id
+    def get_allowed_schemes(self):
+        """
+        Returns the list of redirect schemes allowed by the Application.
+        By default, returns `ALLOWED_REDIRECT_URI_SCHEMES`.
+        """
+        return oauth2_settings.ALLOWED_REDIRECT_URI_SCHEMES
 
     def allows_grant_type(self, *grant_types):
         return self.authorization_grant_type in grant_types
@@ -161,9 +168,19 @@ class AbstractApplication(models.Model):
         return True
 
 
+class ApplicationManager(models.Manager):
+    def get_by_natural_key(self, client_id):
+        return self.get(client_id=client_id)
+
+
 class Application(AbstractApplication):
+    objects = ApplicationManager()
+
     class Meta(AbstractApplication.Meta):
         swappable = "OAUTH2_PROVIDER_APPLICATION_MODEL"
+
+    def natural_key(self):
+        return (self.client_id,)
 
 
 @python_2_unicode_compatible
@@ -231,6 +248,7 @@ class AbstractAccessToken(models.Model):
     Fields:
 
     * :attr:`user` The Django user representing resources' owner
+    * :attr:`source_refresh_token` If from a refresh, the consumed RefeshToken
     * :attr:`token` Access token
     * :attr:`application` Application instance
     * :attr:`expires` Date and time of token expiration, in DateTime format
@@ -240,6 +258,11 @@ class AbstractAccessToken(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, blank=True, null=True,
         related_name="%(app_label)s_%(class)s"
+    )
+    source_refresh_token = models.OneToOneField(
+        # unique=True implied by the OneToOneField
+        oauth2_settings.REFRESH_TOKEN_MODEL, on_delete=models.SET_NULL, blank=True, null=True,
+        related_name="refreshed_access_token"
     )
     token = models.CharField(max_length=255, unique=True, )
     application = models.ForeignKey(
@@ -323,36 +346,49 @@ class AbstractRefreshToken(models.Model):
     * :attr:`application` Application instance
     * :attr:`access_token` AccessToken instance this refresh token is
                            bounded to
+    * :attr:`revoked` Timestamp of when this refresh token was revoked
     """
     id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
         related_name="%(app_label)s_%(class)s"
     )
-    token = models.CharField(max_length=255, unique=True)
+    token = models.CharField(max_length=255)
     application = models.ForeignKey(
         oauth2_settings.APPLICATION_MODEL, on_delete=models.CASCADE)
     access_token = models.OneToOneField(
-        oauth2_settings.ACCESS_TOKEN_MODEL, on_delete=models.CASCADE,
+        oauth2_settings.ACCESS_TOKEN_MODEL, on_delete=models.SET_NULL, blank=True, null=True,
         related_name="refresh_token"
     )
 
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
+    revoked = models.DateTimeField(null=True)
 
     def revoke(self):
         """
-        Delete this refresh token along with related access token
+        Mark this refresh token revoked and revoke related access token
         """
         access_token_model = get_access_token_model()
-        access_token_model.objects.get(id=self.access_token.id).revoke()
-        self.delete()
+        refresh_token_model = get_refresh_token_model()
+        with transaction.atomic():
+            self = refresh_token_model.objects.filter(
+                pk=self.pk, revoked__isnull=True
+            ).select_for_update().first()
+            if not self:
+                return
+
+            access_token_model.objects.get(id=self.access_token_id).revoke()
+            self.access_token = None
+            self.revoked = timezone.now()
+            self.save()
 
     def __str__(self):
         return self.token
 
     class Meta:
         abstract = True
+        unique_together = ("token", "revoked",)
 
 
 class RefreshToken(AbstractRefreshToken):
@@ -491,6 +527,7 @@ def clear_expired():
 
     with transaction.atomic():
         if refresh_expire_at:
+            refresh_token_model.objects.filter(revoked__lt=refresh_expire_at).delete()
             refresh_token_model.objects.filter(access_token__expires__lt=refresh_expire_at).delete()
-            access_token_model.objects.filter(refresh_token__isnull=True, expires__lt=now).delete()
+        access_token_model.objects.filter(refresh_token__isnull=True, expires__lt=now).delete()
         grant_model.objects.filter(expires__lt=now).delete()

@@ -28,6 +28,7 @@ pip-log.txt
 .pytest_cache
 .coverage
 .tox
+.pytest_cache/
 nosetests.xml
 
 # Translations
