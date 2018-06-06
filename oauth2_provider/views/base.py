@@ -16,7 +16,7 @@ from django.views.generic import FormView, View
 
 from ..exceptions import OAuthToolkitError
 from ..forms import AllowForm
-from ..http import OAuth2ResponseRedirect
+from ..http import HttpResponseUriRedirect
 from ..models import get_access_token_model, get_application_model
 from ..scopes import get_scopes_backend
 from ..settings import oauth2_settings
@@ -239,7 +239,8 @@ class TokenView(OAuthLibMixin, View):
                     sender=self, request=request,
                     token=token)
         body = json.loads(body)
-        body['access_token'] = body['id_token']
+        if 'id_token' in body:
+            body['access_token'] = body['id_token']
         response = HttpResponse(content=json.dumps(body), status=status)
 
         for k, v in headers.items():
