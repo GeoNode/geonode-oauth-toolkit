@@ -57,6 +57,7 @@ UserModel = get_user_model()
 
 
 class OAuth2Validator(RequestValidator):
+
     def _extract_basic_auth(self, request):
         """
         Return authentication string if request contains basic auth credentials,
@@ -254,7 +255,6 @@ class OAuth2Validator(RequestValidator):
 
     def _get_token_from_authentication_server(self, token, introspection_url, introspection_token):
         bearer = "Bearer {}".format(introspection_token)
-
         try:
             response = requests.post(
                 introspection_url,
@@ -337,8 +337,12 @@ class OAuth2Validator(RequestValidator):
                 # this is needed by django rest framework
                 request.access_token = access_token
                 return True
+
             return False
         except AccessToken.DoesNotExist:
+            import traceback
+            traceback.print_exc()
+
             # there is no initial token, look up the token
             if introspection_url and introspection_token:
                 access_token = self._get_token_from_authentication_server(
@@ -381,7 +385,8 @@ class OAuth2Validator(RequestValidator):
         rfc:`8.4`, so validate the response_type only if it matches "code" or "token"
         """
         if response_type == "code":
-            return client.allows_grant_type(AbstractApplication.GRANT_AUTHORIZATION_CODE)
+            return client.allows_grant_type(
+                AbstractApplication.GRANT_AUTHORIZATION_CODE, AbstractApplication.GRANT_OPENID_HYBRID)
         elif response_type == "token":
             return client.allows_grant_type(AbstractApplication.GRANT_IMPLICIT)
         elif response_type == "id_token":
@@ -584,7 +589,6 @@ class OAuth2Validator(RequestValidator):
 
     @transaction.atomic
     def _save_id_token(self, token, request, expires, *args, **kwargs):
-
         scopes = request.scope or " ".join(request.scopes)
 
         if request.grant_type == "client_credentials":
@@ -603,7 +607,6 @@ class OAuth2Validator(RequestValidator):
         return self.get_id_token(token, token_handler, request)
 
     def get_id_token(self, token, token_handler, request):
-
         key = jwk.JWK.from_pem(oauth2_settings.OIDC_RSA_PRIVATE_KEY.encode("utf8"))
 
         # TODO: http://openid.net/specs/openid-connect-core-1_0.html#HybridIDToken2
@@ -618,6 +621,7 @@ class OAuth2Validator(RequestValidator):
         claims = {
             "iss": 'https://id.olist.com',   # HTTPS URL
             "sub": str(request.user.id),
+            "preferred_username": str(request.user.username),
             "aud": request.client_id,
             "exp": int(dateformat.format(expiration_time, "U")),
             "iat": int(dateformat.format(datetime.utcnow(), "U")),
@@ -632,11 +636,14 @@ class OAuth2Validator(RequestValidator):
         # http://openid.net/specs/openid-connect-core-1_0.html#CodeIDToken
         # http://openid.net/specs/openid-connect-core-1_0.html#ImplicitIDToken
         # if request.grant_type in 'authorization_code' and 'access_token' in token:
-        if (request.grant_type is "authorization_code" and "access_token" in token) or request.response_type == "code id_token token" or (request.response_type == "id_token token" and "access_token" in token):
-            acess_token = token["access_token"]
-            sha256 = hashlib.sha256(acess_token.encode("ascii"))
+        if (request.grant_type == "authorization_code" and "access_token" in token) or\
+                request.response_type == "code id_token token" or\
+                    (request.response_type == "id_token token" and "access_token" in token):
+            access_token = token["access_token"]
+            sha256 = hashlib.sha256(access_token.encode("ascii"))
             bits128 = sha256.hexdigest()[:16]
             at_hash = base64.urlsafe_b64encode(bits128.encode("ascii"))
+            claims['access_token'] = access_token
             claims['at_hash'] = at_hash.decode("utf8")
 
         # TODO: create a function to check if we should include c_hash
