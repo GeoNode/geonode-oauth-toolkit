@@ -61,7 +61,7 @@ class BaseAuthorizationView(LoginRequiredMixin, OAuthLibMixin, View):
             allowed_schemes = oauth2_settings.ALLOWED_REDIRECT_URI_SCHEMES
         else:
             allowed_schemes = application.get_allowed_schemes()
-        return OAuth2ResponseRedirect(redirect_to, allowed_schemes)
+        return HttpResponseUriRedirect(redirect_to, allowed_schemes)
 
 
 class AuthorizationView(BaseAuthorizationView, FormView):
