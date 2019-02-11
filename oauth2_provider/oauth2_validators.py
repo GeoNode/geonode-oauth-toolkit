@@ -398,9 +398,6 @@ class OAuth2Validator(RequestValidator):
             self._set_oauth2_error_on_request(request, access_token, scopes)
             return False
         except AccessToken.DoesNotExist:
-            import traceback
-            traceback.print_exc()
-
             # there is no initial token, look up the token
             if introspection_url and (introspection_token or introspection_credentials):
                 access_token = self._get_token_from_authentication_server(
