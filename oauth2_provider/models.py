@@ -66,7 +66,7 @@ class AbstractApplication(models.Model):
         (HS256_ALGORITHM, _("HMAC with SHA-2 256")),
     )
 
-    id = models.BigAutoField(primary_key=True)
+    id = models.AutoField(primary_key=True)
     client_id = models.CharField(
         max_length=100, unique=True, default=generate_client_id, db_index=True
     )
@@ -199,7 +199,7 @@ class AbstractGrant(models.Model):
     * :attr:`redirect_uri` Self explained
     * :attr:`scope` Required scopes, optional
     """
-    id = models.BigAutoField(primary_key=True)
+    id = models.AutoField(primary_key=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
         related_name="%(app_label)s_%(class)s"
@@ -254,7 +254,7 @@ class AbstractAccessToken(models.Model):
     * :attr:`expires` Date and time of token expiration, in DateTime format
     * :attr:`scope` Allowed scopes
     """
-    id = models.BigAutoField(primary_key=True)
+    id = models.AutoField(primary_key=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, blank=True, null=True,
         related_name="%(app_label)s_%(class)s"
@@ -348,7 +348,7 @@ class AbstractRefreshToken(models.Model):
                            bounded to
     * :attr:`revoked` Timestamp of when this refresh token was revoked
     """
-    id = models.BigAutoField(primary_key=True)
+    id = models.AutoField(primary_key=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
         related_name="%(app_label)s_%(class)s"
@@ -410,7 +410,7 @@ class AbstractIDToken(models.Model):
     * :attr:`expires` Date and time of token expiration, in DateTime format
     * :attr:`scope` Allowed scopes
     """
-    id = models.BigAutoField(primary_key=True)
+    id = models.AutoField(primary_key=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, blank=True, null=True,
         related_name="%(app_label)s_%(class)s"
