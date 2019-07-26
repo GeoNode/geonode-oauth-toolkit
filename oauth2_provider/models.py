@@ -1,6 +1,12 @@
-from __future__ import unicode_literals
-
+import json
 from datetime import timedelta
+try:
+    from urllib.parse import urlparse, parse_qsl
+except ImportError:
+    from urlparse import urlparse, parse_qsl
+import logging
+
+from jwcrypto import jwk, jwt
 
 from django.apps import apps
 from django.conf import settings
@@ -8,17 +14,16 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import models, transaction
 from django.urls import reverse
 from django.utils import timezone
-from django.utils.encoding import python_2_unicode_compatible
 from django.utils.translation import ugettext_lazy as _
 
-from .compat import parse_qsl, urlparse
 from .generators import generate_client_id, generate_client_secret
 from .scopes import get_scopes_backend
 from .settings import oauth2_settings
-from .validators import validate_uris
+from .validators import RedirectURIValidator, WildcardSet
+
+logger = logging.getLogger(__name__)
 
 
-@python_2_unicode_compatible
 class AbstractApplication(models.Model):
     """
     An Application instance represents a Client on the Authorization server.
@@ -66,7 +71,7 @@ class AbstractApplication(models.Model):
         (HS256_ALGORITHM, _("HMAC with SHA-2 256")),
     )
 
-    id = models.AutoField(primary_key=True)
+    id = models.BigAutoField(primary_key=True)
     client_id = models.CharField(
         max_length=100, unique=True, default=generate_client_id, db_index=True
     )
@@ -76,9 +81,8 @@ class AbstractApplication(models.Model):
         null=True, blank=True, on_delete=models.CASCADE
     )
 
-    help_text = _("Allowed URIs list, space separated")
     redirect_uris = models.TextField(
-        blank=True, help_text=help_text, validators=[validate_uris]
+        blank=True, help_text=_("Allowed URIs list, space separated"),
     )
     client_type = models.CharField(max_length=32, choices=CLIENT_TYPES)
     authorization_grant_type = models.CharField(
@@ -139,12 +143,29 @@ class AbstractApplication(models.Model):
 
     def clean(self):
         from django.core.exceptions import ValidationError
-        if not self.redirect_uris \
-            and self.authorization_grant_type \
-            in (AbstractApplication.GRANT_AUTHORIZATION_CODE,
-                AbstractApplication.GRANT_IMPLICIT):
-            error = _("Redirect_uris could not be empty with {grant_type} grant_type")
-            raise ValidationError(error.format(grant_type=self.authorization_grant_type))
+
+        grant_types = (
+            AbstractApplication.GRANT_AUTHORIZATION_CODE,
+            AbstractApplication.GRANT_IMPLICIT,
+        )
+
+        redirect_uris = self.redirect_uris.strip().split()
+        allowed_schemes = set(s.lower() for s in self.get_allowed_schemes())
+
+        if redirect_uris:
+            validator = RedirectURIValidator(WildcardSet())
+            for uri in redirect_uris:
+                validator(uri)
+                scheme = urlparse(uri).scheme
+                if scheme not in allowed_schemes:
+                    raise ValidationError(_(
+                        "Unauthorized redirect scheme: {scheme}"
+                    ).format(scheme=scheme))
+
+        elif self.authorization_grant_type in grant_types:
+            raise ValidationError(_(
+                "redirect_uris cannot be empty with grant_type {grant_type}"
+            ).format(grant_type=self.authorization_grant_type))
 
     def get_absolute_url(self):
         return reverse("oauth2_provider:detail", args=[str(self.id)])
@@ -183,7 +204,6 @@ class Application(AbstractApplication):
         return (self.client_id,)
 
 
-@python_2_unicode_compatible
 class AbstractGrant(models.Model):
     """
     A Grant instance represents a token with a short lifetime that can
@@ -198,8 +218,17 @@ class AbstractGrant(models.Model):
                       :data:`settings.AUTHORIZATION_CODE_EXPIRE_SECONDS`
     * :attr:`redirect_uri` Self explained
     * :attr:`scope` Required scopes, optional
+    * :attr:`code_challenge` PKCE code challenge
+    * :attr:`code_challenge_method` PKCE code challenge transform algorithm
     """
-    id = models.AutoField(primary_key=True)
+    CODE_CHALLENGE_PLAIN = "plain"
+    CODE_CHALLENGE_S256 = "S256"
+    CODE_CHALLENGE_METHODS = (
+        (CODE_CHALLENGE_PLAIN, "plain"),
+        (CODE_CHALLENGE_S256, "S256")
+    )
+
+    id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
         related_name="%(app_label)s_%(class)s"
@@ -214,6 +243,10 @@ class AbstractGrant(models.Model):
 
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
+
+    code_challenge = models.CharField(max_length=128, blank=True, default="")
+    code_challenge_method = models.CharField(
+        max_length=10, blank=True, default="", choices=CODE_CHALLENGE_METHODS)
 
     def is_expired(self):
         """
@@ -239,7 +272,6 @@ class Grant(AbstractGrant):
         swappable = "OAUTH2_PROVIDER_GRANT_MODEL"
 
 
-@python_2_unicode_compatible
 class AbstractAccessToken(models.Model):
     """
     An AccessToken instance represents the actual access token to
@@ -254,7 +286,7 @@ class AbstractAccessToken(models.Model):
     * :attr:`expires` Date and time of token expiration, in DateTime format
     * :attr:`scope` Allowed scopes
     """
-    id = models.AutoField(primary_key=True)
+    id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, blank=True, null=True,
         related_name="%(app_label)s_%(class)s"
@@ -265,6 +297,10 @@ class AbstractAccessToken(models.Model):
         related_name="refreshed_access_token"
     )
     token = models.CharField(max_length=255, unique=True, )
+    id_token = models.OneToOneField(
+        oauth2_settings.ID_TOKEN_MODEL, on_delete=models.CASCADE, blank=True, null=True,
+        related_name="access_token"
+    )
     application = models.ForeignKey(
         oauth2_settings.APPLICATION_MODEL, on_delete=models.CASCADE, blank=True, null=True,
     )
@@ -333,7 +369,6 @@ class AccessToken(AbstractAccessToken):
         swappable = "OAUTH2_PROVIDER_ACCESS_TOKEN_MODEL"
 
 
-@python_2_unicode_compatible
 class AbstractRefreshToken(models.Model):
     """
     A RefreshToken instance represents a token that can be swapped for a new
@@ -348,7 +383,7 @@ class AbstractRefreshToken(models.Model):
                            bounded to
     * :attr:`revoked` Timestamp of when this refresh token was revoked
     """
-    id = models.AutoField(primary_key=True)
+    id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
         related_name="%(app_label)s_%(class)s"
@@ -378,7 +413,10 @@ class AbstractRefreshToken(models.Model):
             if not self:
                 return
 
-            access_token_model.objects.get(id=self.access_token_id).revoke()
+            try:
+                access_token_model.objects.get(id=self.access_token_id).revoke()
+            except access_token_model.DoesNotExist:
+                pass
             self.access_token = None
             self.revoked = timezone.now()
             self.save()
@@ -396,7 +434,6 @@ class RefreshToken(AbstractRefreshToken):
         swappable = "OAUTH2_PROVIDER_REFRESH_TOKEN_MODEL"
 
 
-@python_2_unicode_compatible
 class AbstractIDToken(models.Model):
     """
     An IDToken instance represents the actual token to
@@ -410,7 +447,7 @@ class AbstractIDToken(models.Model):
     * :attr:`expires` Date and time of token expiration, in DateTime format
     * :attr:`scope` Allowed scopes
     """
-    id = models.AutoField(primary_key=True)
+    id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, blank=True, null=True,
         related_name="%(app_label)s_%(class)s"
@@ -472,6 +509,12 @@ class AbstractIDToken(models.Model):
         token_scopes = self.scope.split()
         return {name: desc for name, desc in all_scopes.items() if name in token_scopes}
 
+    @property
+    def claims(self):
+        key = jwk.JWK.from_pem(oauth2_settings.OIDC_RSA_PRIVATE_KEY.encode("utf8"))
+        jwt_token = jwt.JWT(key=key, jwt=self.token)
+        return json.loads(jwt_token.claims)
+
     def __str__(self):
         return self.token
 
@@ -527,7 +570,30 @@ def clear_expired():
 
     with transaction.atomic():
         if refresh_expire_at:
-            refresh_token_model.objects.filter(revoked__lt=refresh_expire_at).delete()
-            refresh_token_model.objects.filter(access_token__expires__lt=refresh_expire_at).delete()
-        access_token_model.objects.filter(refresh_token__isnull=True, expires__lt=now).delete()
-        grant_model.objects.filter(expires__lt=now).delete()
+            revoked = refresh_token_model.objects.filter(
+                revoked__lt=refresh_expire_at,
+            )
+            expired = refresh_token_model.objects.filter(
+                access_token__expires__lt=refresh_expire_at,
+            )
+
+            logger.info('%s Revoked refresh tokens to be deleted', revoked.count())
+            logger.info('%s Expired refresh tokens to be deleted', expired.count())
+
+            revoked.delete()
+            expired.delete()
+        else:
+            logger.info('refresh_expire_at is %s. No refresh tokens deleted.',
+                         refresh_expire_at)
+
+        access_tokens = access_token_model.objects.filter(
+            refresh_token__isnull=True,
+            expires__lt=now
+        )
+        grants = grant_model.objects.filter(expires__lt=now)
+
+        logger.info('%s Expired access tokens to be deleted', access_tokens.count())
+        logger.info('%s Expired grant tokens to be deleted', grants.count())
+
+        access_tokens.delete()
+        grants.delete()

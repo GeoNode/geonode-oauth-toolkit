@@ -1,7 +1,18 @@
-### 1.1.3 [2018-10-12]
+### 1.3.0 [unreleased]
 
-* Fix a concurrency issue with Refresh Tokens (#638)
-* Fix Refresh Token revocation when the Access Token does not exist (#625)
+* Fix a race condition in creation of AccessToken with external oauth2 server.
+* **Backwards-incompatible** squashed migrations:
+  If you are currently on a release < 1.2.0, you will need to first install 1.2.x then `manage.py migrate` before
+  upgrading to >= 1.3.0.
+
+### 1.2.0 [2018-06-03]
+
+* **Compatibility**: Python 3.4 is the new minimum required version.
+* **Compatibility**: Django 2.0 is the new minimum required version.
+* **New feature**: Added TokenMatchesOASRequirements Permissions.
+* validators.URIValidator has been updated to match URLValidator behaviour more closely.
+* Moved `redirect_uris` validation to the application clean() method.
+
 
 ### 1.1.2 [2018-05-12]
 

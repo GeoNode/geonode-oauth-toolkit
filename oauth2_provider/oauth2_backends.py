@@ -1,11 +1,13 @@
-from __future__ import unicode_literals
-
 import json
+
+try:
+    from urllib.parse import urlparse, urlunparse
+except ImportError:
+    from urlparse import urlparse, urlunparse
 
 from oauthlib import oauth2
 from oauthlib.common import quote, urlencode, urlencoded
 
-from .compat import urlparse, urlunparse
 from .exceptions import FatalClientError, OAuthToolkitError
 from .settings import oauth2_settings
 
@@ -87,7 +89,6 @@ class OAuthLibCore(object):
         """
         try:
             uri, http_method, body, headers = self._extract_params(request)
-
             scopes, credentials = self.server.validate_authorization_request(
                 uri, http_method=http_method, body=body, headers=headers)
 
@@ -183,6 +184,8 @@ class JSONOAuthLibCore(OAuthLibCore):
         """
         try:
             body = json.loads(request.body.decode("utf-8")).items()
+        except AttributeError:
+            body = ""
         except ValueError:
             body = ""
 

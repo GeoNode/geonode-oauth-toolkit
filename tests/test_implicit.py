@@ -1,4 +1,9 @@
-from __future__ import unicode_literals
+
+try:
+    from urllib.parse import parse_qs, urlencode, urlparse
+except ImportError:
+    from urlparse import parse_qs, urlparse
+    from urllib import urlencode
 
 import json
 
@@ -8,7 +13,6 @@ from django.urls import reverse
 
 from jwcrypto import jwk, jwt
 
-from oauth2_provider.compat import parse_qs, urlencode, urlparse
 from oauth2_provider.models import get_application_model
 from oauth2_provider.settings import oauth2_settings
 from oauth2_provider.views import ProtectedResourceView

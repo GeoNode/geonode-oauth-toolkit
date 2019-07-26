@@ -1,5 +1,3 @@
-from __future__ import unicode_literals
-
 import json
 
 from django.contrib.auth import get_user_model
@@ -78,7 +76,7 @@ class TestPasswordTokenView(BaseTest):
         auth_headers = get_basic_auth_header(self.application.client_id, self.application.client_secret)
 
         response = self.client.post(reverse("oauth2_provider:token"), data=token_request_data, **auth_headers)
-        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.status_code, 400)
 
 
 class TestPasswordProtectedResource(BaseTest):

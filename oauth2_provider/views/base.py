@@ -1,11 +1,6 @@
 import json
 import logging
 
-try:
-    import urlparse
-except ImportError:
-    import urllib.parse as urlparse
-
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.http import HttpResponse
 from django.utils import timezone
@@ -16,13 +11,17 @@ from django.views.generic import FormView, View
 
 from ..exceptions import OAuthToolkitError
 from ..forms import AllowForm
-from ..http import HttpResponseUriRedirect
+from ..http import OAuth2ResponseRedirect
 from ..models import get_access_token_model, get_application_model
 from ..scopes import get_scopes_backend
 from ..settings import oauth2_settings
 from ..signals import app_authorized
 from .mixins import OAuthLibMixin
 
+try:
+    from urllib.parse import urlparse, parse_qsl
+except ImportError:
+    from urlparse import urlparse, parse_qsl
 
 log = logging.getLogger("oauth2_provider")
 
@@ -37,6 +36,7 @@ class BaseAuthorizationView(LoginRequiredMixin, OAuthLibMixin, View):
     * Implicit grant
 
     """
+
     def dispatch(self, request, *args, **kwargs):
         self.oauth2_data = {}
         return super(BaseAuthorizationView, self).dispatch(request, *args, **kwargs)
@@ -46,7 +46,7 @@ class BaseAuthorizationView(LoginRequiredMixin, OAuthLibMixin, View):
         Handle errors either by redirecting to redirect_uri with a json in the body containing
         error details or providing an error response
         """
-        redirect, error_response = super(BaseAuthorizationView, self).error_response(error, **kwargs)
+        redirect, error_response = super().error_response(error, **kwargs)
 
         if redirect:
             return self.redirect(error_response["url"], application)
@@ -61,7 +61,7 @@ class BaseAuthorizationView(LoginRequiredMixin, OAuthLibMixin, View):
             allowed_schemes = oauth2_settings.ALLOWED_REDIRECT_URI_SCHEMES
         else:
             allowed_schemes = application.get_allowed_schemes()
-        return HttpResponseUriRedirect(redirect_to, allowed_schemes)
+        return OAuth2ResponseRedirect(redirect_to, allowed_schemes)
 
 
 class AuthorizationView(BaseAuthorizationView, FormView):
@@ -103,6 +103,8 @@ class AuthorizationView(BaseAuthorizationView, FormView):
             "client_id": self.oauth2_data.get("client_id", None),
             "state": self.oauth2_data.get("state", None),
             "response_type": self.oauth2_data.get("response_type", None),
+            "code_challenge": self.oauth2_data.get("code_challenge", None),
+            "code_challenge_method": self.oauth2_data.get("code_challenge_method", None),
         }
         return initial_data
 
@@ -113,18 +115,20 @@ class AuthorizationView(BaseAuthorizationView, FormView):
             "client_id": form.cleaned_data.get("client_id"),
             "redirect_uri": form.cleaned_data.get("redirect_uri"),
             "response_type": form.cleaned_data.get("response_type", None),
-            "state": form.cleaned_data.get("state", None),
+            "state": form.cleaned_data.get("state", None)
         }
-
+        if form.cleaned_data.get("code_challenge", False):
+            credentials["code_challenge"] = form.cleaned_data.get("code_challenge")
+        if form.cleaned_data.get("code_challenge_method", False):
+            credentials["code_challenge_method"] = form.cleaned_data.get("code_challenge_method")
         body = {
             "nonce": form.cleaned_data.get("nonce")
         }
-
         scopes = form.cleaned_data.get("scope")
         allow = form.cleaned_data.get("allow")
 
         try:
-            uri, headers, body, status = self.create_authorization_response(
+            redirect_uri, headers, body, status = self.create_authorization_response(
                 self.request.get_raw_uri(),
                 request=self.request,
                 scopes=scopes,
@@ -135,13 +139,23 @@ class AuthorizationView(BaseAuthorizationView, FormView):
         except OAuthToolkitError as error:
             return self.error_response(error, application)
 
-        self.success_url = uri
+        self.success_url = redirect_uri
         log.debug("Success url for the request: {0}".format(self.success_url))
         return self.redirect(self.success_url, application)
 
     def get(self, request, *args, **kwargs):
         try:
             scopes, credentials = self.validate_authorization_request(request)
+            # TODO: Remove the two following lines after oauthlib updates its implementation
+            # https://github.com/jazzband/django-oauth-toolkit/pull/707#issuecomment-485011945
+            credentials["code_challenge"] = credentials.get(
+                "code_challenge",
+                request.GET.get("code_challenge", None)
+            )
+            credentials["code_challenge_method"] = credentials.get(
+                "code_challenge_method",
+                request.GET.get("code_challenge_method", None)
+            )
         except OAuthToolkitError as error:
             # Application is not available at this time.
             return self.error_response(error, application=None)
@@ -154,21 +168,23 @@ class AuthorizationView(BaseAuthorizationView, FormView):
         # TODO: Cache this!
         application = get_application_model().objects.get(client_id=credentials["client_id"])
 
-        uri_query = urlparse.urlparse(self.request.get_raw_uri()).query
-        uri_query_params = dict(urlparse.parse_qsl(uri_query, keep_blank_values=True, strict_parsing=True))
+        uri_query = urlparse(self.request.get_raw_uri()).query
+        uri_query_params = dict(parse_qsl(uri_query, keep_blank_values=True, strict_parsing=True))
 
         kwargs["application"] = application
         kwargs["client_id"] = credentials["client_id"]
         kwargs["redirect_uri"] = credentials["redirect_uri"]
         kwargs["response_type"] = credentials["response_type"]
         kwargs["state"] = credentials["state"]
+        kwargs["code_challenge"] = credentials["code_challenge"]
+        kwargs["code_challenge_method"] = credentials["code_challenge_method"]
         kwargs["nonce"] = uri_query_params.get('nonce', None)
 
         self.oauth2_data = kwargs
         # following two loc are here only because of https://code.djangoproject.com/ticket/17795
         form = self.get_form(self.get_form_class())
         kwargs["form"] = form
-        allowed_schemes = oauth2_settings.ALLOWED_REDIRECT_URI_SCHEMES
+
         # Check to see if the user has already granted access and return
         # a successful response depending on "approval_prompt" url parameter
         require_approval = request.GET.get("approval_prompt", oauth2_settings.REQUEST_APPROVAL_PROMPT)
@@ -179,14 +195,14 @@ class AuthorizationView(BaseAuthorizationView, FormView):
             # This is useful for in-house applications-> assume an in-house applications
             # are already approved.
             if application.skip_authorization:
-                uri, headers, body, status = self.create_authorization_response(
+                redirect_uri, headers, body, status = self.create_authorization_response(
                     self.request.get_raw_uri(),
                     request=self.request,
                     scopes=" ".join(scopes),
                     credentials=credentials,
-                    allow=True)
-                # return self.redirect(uri, application)
-                return HttpResponseUriRedirect(uri, allowed_schemes)
+                    allow=True
+                )
+                return self.redirect(redirect_uri, application)
 
             elif require_approval == "auto":
                 tokens = get_access_token_model().objects.filter(
@@ -198,14 +214,14 @@ class AuthorizationView(BaseAuthorizationView, FormView):
                 # check past authorizations regarded the same scopes as the current one
                 for token in tokens:
                     if token.allow_scopes(scopes):
-                        uri, headers, body, status = self.create_authorization_response(
+                        redirect_uri, headers, body, status = self.create_authorization_response(
                             self.request.get_raw_uri(),
                             request=self.request,
                             scopes=" ".join(scopes),
                             credentials=credentials,
-                            allow=True)
-                        # return self.redirect(uri, application)
-                        return HttpResponseUriRedirect(uri, allowed_schemes)
+                            allow=True
+                        )
+                        return self.redirect(redirect_uri, application)
 
         except OAuthToolkitError as error:
             return self.error_response(error, application)
@@ -238,10 +254,7 @@ class TokenView(OAuthLibMixin, View):
                 app_authorized.send(
                     sender=self, request=request,
                     token=token)
-        body = json.loads(body)
-        if 'id_token' in body:
-            body['access_token'] = body['id_token']
-        response = HttpResponse(content=json.dumps(body), status=status)
+        response = HttpResponse(content=body, status=status)
 
         for k, v in headers.items():
             response[k] = v

@@ -1,6 +1,9 @@
-from __future__ import unicode_literals
-
 import json
+
+try:
+    from urllib.parse import quote_plus
+except ImportError:
+    from urlparse import quote_plus
 
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
@@ -8,7 +11,6 @@ from django.urls import reverse
 from django.views.generic import View
 from oauthlib.oauth2 import BackendApplicationServer
 
-from oauth2_provider.compat import quote_plus
 from oauth2_provider.models import get_access_token_model, get_application_model
 from oauth2_provider.oauth2_backends import OAuthLibCore
 from oauth2_provider.oauth2_validators import OAuth2Validator

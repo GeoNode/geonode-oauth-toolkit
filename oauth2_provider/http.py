@@ -1,8 +1,11 @@
+try:
+    from urllib.parse import urlparse
+except ImportError:
+    from urlparse import urlparse
+
 from django.core.exceptions import DisallowedRedirect
 from django.http import HttpResponse
 from django.utils.encoding import iri_to_uri
-
-from .compat import urlparse
 
 
 class OAuth2ResponseRedirect(HttpResponse):
@@ -31,7 +34,3 @@ class OAuth2ResponseRedirect(HttpResponse):
             raise DisallowedRedirect(
                 "Redirect to scheme {!r} is not permitted".format(parsed.scheme)
             )
-
-
-# Backwards compatibility (as of 1.0.0)
-HttpResponseUriRedirect = OAuth2ResponseRedirect

@@ -15,8 +15,6 @@ This module provides the `oauth2_settings` object, that is used to access
 OAuth2 Provider settings, checking for user settings first, then falling
 back to the defaults.
 """
-from __future__ import unicode_literals
-
 import importlib
 
 from django.conf import settings
@@ -35,7 +33,7 @@ DEFAULTS = {
     "CLIENT_ID_GENERATOR_CLASS": "oauth2_provider.generators.ClientIdGenerator",
     "CLIENT_SECRET_GENERATOR_CLASS": "oauth2_provider.generators.ClientSecretGenerator",
     "CLIENT_SECRET_GENERATOR_LENGTH": 128,
-    "OAUTH2_SERVER_CLASS": "oauthlib.oauth2.Server",
+    "OAUTH2_SERVER_CLASS": "oauthlib.openid.connect.core.endpoints.pre_configured.Server",
     "OAUTH2_VALIDATOR_CLASS": "oauth2_provider.oauth2_validators.OAuth2Validator",
     "OAUTH2_BACKEND_CLASS": "oauth2_provider.oauth2_backends.OAuthLibCore",
     "SCOPES": {"read": "Reading scope", "write": "Writing scope"},
@@ -82,6 +80,9 @@ DEFAULTS = {
     "RESOURCE_SERVER_AUTH_TOKEN": None,
     "RESOURCE_SERVER_INTROSPECTION_CREDENTIALS": None,
     "RESOURCE_SERVER_TOKEN_CACHING_SECONDS": 36000,
+
+    # Whether or not PKCE is required
+    "PKCE_REQUIRED": False
 }
 
 # List of settings that cannot be empty

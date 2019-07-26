@@ -1,8 +1,12 @@
-from __future__ import unicode_literals
-
 import base64
 import datetime
 import json
+
+try:
+    from urllib.parse import parse_qs, urlencode, urlparse
+except ImportError:
+    from urlparse import parse_qs, urlparse
+    from urllib import urlencode
 
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
@@ -10,7 +14,6 @@ from django.urls import reverse
 from django.utils import timezone
 from oauthlib.oauth2.rfc6749 import errors as oauthlib_errors
 
-from oauth2_provider.compat import parse_qs, urlencode, urlparse
 from oauth2_provider.models import (
     get_access_token_model, get_application_model,
     get_grant_model, get_refresh_token_model
@@ -96,6 +99,7 @@ class TestRegressionIssue315Hybrid(BaseTest):
             "state": "random_state_string",
             "scope": "openid read write",
             "redirect_uri": "http://example.org",
+            "nonce": "nonce",
         })
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
@@ -111,6 +115,7 @@ class TestRegressionIssue315Hybrid(BaseTest):
             "state": "random_state_string",
             "scope": "openid read write",
             "redirect_uri": "http://example.org",
+            "nonce": "nonce",
         })
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
@@ -218,6 +223,7 @@ class TestHybridView(BaseTest):
             "state": "random_state_string",
             "scope": "openid",
             "redirect_uri": "http://example.org",
+            "nonce": "nonce",
         })
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
@@ -414,6 +420,7 @@ class TestHybridView(BaseTest):
             "redirect_uri": "http://example.org",
             "response_type": "code id_token",
             "allow": True,
+            "nonce": "nonce",
         }
 
         response = self.client.post(reverse("oauth2_provider:authorize"), data=form_data)
@@ -436,6 +443,7 @@ class TestHybridView(BaseTest):
             "redirect_uri": "http://example.org",
             "response_type": "code id_token token",
             "allow": True,
+            "nonce": "nonce",
         }
 
         response = self.client.post(reverse("oauth2_provider:authorize"), data=form_data)
@@ -459,6 +467,7 @@ class TestHybridView(BaseTest):
             "redirect_uri": "http://example.org",
             "response_type": "code id_token",
             "allow": True,
+            "nonce": "nonce",
         }
 
         response = self.client.post(reverse("oauth2_provider:authorize"), data=form_data)
@@ -579,6 +588,7 @@ class TestHybridView(BaseTest):
             "redirect_uri": "custom-scheme://example.com",
             "response_type": "code id_token",
             "allow": True,
+            "nonce": "nonce",
         }
 
         response = self.client.post(reverse("oauth2_provider:authorize"), data=form_data)
@@ -602,6 +612,7 @@ class TestHybridView(BaseTest):
             "redirect_uri": "custom-scheme://example.com",
             "response_type": "code id_token token",
             "allow": True,
+            "nonce": "nonce",
         }
 
         response = self.client.post(reverse("oauth2_provider:authorize"), data=form_data)
@@ -671,6 +682,7 @@ class TestHybridView(BaseTest):
             "redirect_uri": "http://example.com?foo=bar",
             "response_type": "code id_token",
             "allow": True,
+            "nonce": "nonce",
         }
 
         response = self.client.post(reverse("oauth2_provider:authorize"), data=form_data)
@@ -694,6 +706,7 @@ class TestHybridView(BaseTest):
             "redirect_uri": "http://example.com?foo=bar",
             "response_type": "code id_token token",
             "allow": True,
+            "nonce": "nonce",
         }
 
         response = self.client.post(reverse("oauth2_provider:authorize"), data=form_data)
@@ -722,7 +735,7 @@ class TestHybridView(BaseTest):
 
         response = self.client.post(reverse("oauth2_provider:authorize"), data=form_data)
         self.assertEqual(response.status_code, 302)
-        self.assertEqual("http://example.com?foo=bar&error=access_denied", response["Location"])
+        self.assertEqual("http://example.com?foo=bar&error=access_denied&state=random_state_string", response["Location"])
 
     def test_code_post_auth_fails_when_redirect_uri_path_is_invalid(self):
         """
@@ -755,6 +768,7 @@ class TestHybridTokenView(BaseTest):
             "redirect_uri": "http://example.org",
             "response_type": "code id_token",
             "allow": True,
+            "nonce": "nonce",
         }
 
         response = self.client.post(reverse("oauth2_provider:authorize"), data=authcode_data)
@@ -797,7 +811,7 @@ class TestHybridTokenView(BaseTest):
         auth_headers = get_basic_auth_header(self.application.client_id, self.application.client_secret)
 
         response = self.client.post(reverse("oauth2_provider:token"), data=token_request_data, **auth_headers)
-        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.status_code, 400)
 
     def test_basic_auth_bad_granttype(self):
         """
@@ -833,7 +847,7 @@ class TestHybridTokenView(BaseTest):
         auth_headers = get_basic_auth_header(self.application.client_id, self.application.client_secret)
 
         response = self.client.post(reverse("oauth2_provider:token"), data=token_request_data, **auth_headers)
-        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.status_code, 400)
 
     def test_basic_auth_bad_secret(self):
         """
