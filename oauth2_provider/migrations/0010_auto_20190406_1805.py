@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('oauth2_provider', '0001_initial'),
+        ('oauth2_provider', '0009_merge_20180606_1314'),
     ]
 
     operations = [

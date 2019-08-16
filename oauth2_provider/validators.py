@@ -49,3 +49,15 @@ class WildcardSet(set):
     """
     def __contains__(self, item):
         return True
+
+
+def validate_uris(value):
+    """
+    This validator ensures that `value` contains valid blank-separated URIs"
+    """
+    v = RedirectURIValidator(oauth2_settings.ALLOWED_REDIRECT_URI_SCHEMES)
+    uris = value.split()
+    if not uris:
+        raise ValidationError("Redirect URI cannot be empty")
+    for uri in uris:
+        v(uri)

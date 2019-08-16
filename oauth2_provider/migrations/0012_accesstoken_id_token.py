@@ -8,7 +8,8 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('oauth2_provider', '0004_idtoken'),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+        ('oauth2_provider', '0011_auto_20190413_2007'),
     ]
 
     operations = [
