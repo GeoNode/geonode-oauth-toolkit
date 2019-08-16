@@ -27,11 +27,11 @@ class URIValidator(URLValidator):
 
 class RedirectURIValidator(URIValidator):
     def __init__(self, allowed_schemes, allow_fragments=False):
-        super().__init__(schemes=allowed_schemes)
+        super(RedirectURIValidator, self).__init__(schemes=allowed_schemes)
         self.allow_fragments = allow_fragments
 
     def __call__(self, value):
-        super().__call__(value)
+        super(RedirectURIValidator, self).__call__(value)
         value = force_text(value)
         scheme, netloc, path, query, fragment = urlsplit(value)
         if fragment and not self.allow_fragments:
