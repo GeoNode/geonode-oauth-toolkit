@@ -168,7 +168,7 @@ class OAuthLibCore(object):
         """
         uri, http_method, body, headers = self._extract_params(request)
 
-        if ('Authorization' in headers and headers.get('Authorization') == 'Bearer') or getattr(request, 'access_token', None):
+        if ('Authorization' in headers and headers.get('Authorization').startswith('Bearer')) or getattr(request, 'access_token', None):
             valid, r = self.server.verify_request(uri, http_method, body, headers, scopes=scopes)
             return valid, r
         else:
