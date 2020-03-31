@@ -1,11 +1,24 @@
-### 1.3.0 [unreleased]
+### 1.1.5 [2020-03-31]
 
+* 2020-01-31: vikipha <a href="http://github.com/GeoNode/geonode-oauth-toolkit/commit/a17a15ab7edfde73058502c1e86076409d72ab1b" target="blank"> Fixed bearer verification</a> 
+
+### 1.1.4.6 [2019-09-05]
+
+* Only OAUth2 requests are validated; fall back to other validators instead
+
+### 1.1.4.5 [2019-08-19]
+
+* removing duplicate fields from migrations
+
+### 1.1.4.2 [2019-08-16]
+
+* Merge with https://github.com/wiliamsouza/django-oauth-toolkit
 * Fix a race condition in creation of AccessToken with external oauth2 server.
 * **Backwards-incompatible** squashed migrations:
   If you are currently on a release < 1.2.0, you will need to first install 1.2.x then `manage.py migrate` before
   upgrading to >= 1.3.0.
 
-### 1.2.0 [2018-06-03]
+### 1.1.3 [2019-07-26]
 
 * **Compatibility**: Python 3.4 is the new minimum required version.
 * **Compatibility**: Django 2.0 is the new minimum required version.
