@@ -169,7 +169,7 @@ class AuthorizationView(BaseAuthorizationView, FormView):
         application = get_application_model().objects.get(client_id=credentials["client_id"])
 
         uri_query = urlparse(self.request.get_raw_uri()).query
-        uri_query_params = dict(parse_qsl(uri_query, keep_blank_values=True, strict_parsing=True))
+        uri_query_params = dict(parse_qsl(uri_query, keep_blank_values=True, strict_parsing=False))
 
         kwargs["application"] = application
         kwargs["client_id"] = credentials["client_id"]

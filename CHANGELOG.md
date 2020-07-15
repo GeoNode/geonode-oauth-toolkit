@@ -1,3 +1,7 @@
+### 2.0.0 [2020-07-15]
+
+* 2020-07-15: afabiani Drop Django 1 / Python 2 support
+
 ### 1.1.5 [2020-03-31]
 
 * 2020-01-31: vikipha <a href="http://github.com/GeoNode/geonode-oauth-toolkit/commit/a17a15ab7edfde73058502c1e86076409d72ab1b" target="blank"> Fixed bearer verification</a> 

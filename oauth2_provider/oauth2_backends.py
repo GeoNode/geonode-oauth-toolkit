@@ -1,9 +1,7 @@
 import json
 
-try:
-    from urllib.parse import urlparse, urlunparse
-except ImportError:
-    from urlparse import urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse, urlsplit, parse_qsl
+from urllib.parse import urlencode as urllib_urlencode, SplitResult
 
 from oauthlib import oauth2
 from oauthlib.common import quote, urlencode, urlencoded
@@ -31,8 +29,19 @@ class OAuthLibCore(object):
         unsafe = set(c for c in parsed[4]).difference(urlencoded)
         for c in unsafe:
             parsed[4] = parsed[4].replace(c, quote(c, safe=b""))
+        uri = urlsplit(urlunparse(parsed))
+        query = uri.query
+        params = parse_qsl(query)
+        encoded_params = urllib_urlencode(params, doseq=False)
 
-        return urlunparse(parsed)
+        parsed_url = SplitResult(
+            uri.scheme,
+            uri.netloc,
+            uri.path,
+            encoded_params,
+            uri.fragment)
+
+        return parsed_url.geturl()
 
     def _get_extra_credentials(self, request):
         """
