@@ -1,16 +1,9 @@
-
-try:
-    from urllib.parse import parse_qs, urlencode, urlparse
-except ImportError:
-    from urlparse import parse_qs, urlparse
-    from urllib import urlencode
-
 import json
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
-
 from jwcrypto import jwk, jwt
 
 from oauth2_provider.models import get_application_model
@@ -34,14 +27,13 @@ class BaseTest(TestCase):
         self.test_user = UserModel.objects.create_user("test_user", "test@example.com", "123456")
         self.dev_user = UserModel.objects.create_user("dev_user", "dev@example.com", "123456")
 
-        self.application = Application(
+        self.application = Application.objects.create(
             name="Test Implicit Application",
             redirect_uris="http://localhost http://example.com http://example.org",
             user=self.dev_user,
             client_type=Application.CLIENT_PUBLIC,
             authorization_grant_type=Application.GRANT_IMPLICIT,
         )
-        self.application.save()
 
         oauth2_settings._SCOPES = ["read", "write", "openid"]
         oauth2_settings._DEFAULT_SCOPES = ["read"]

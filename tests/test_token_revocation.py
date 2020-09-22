@@ -1,10 +1,5 @@
 import datetime
 
-try:
-    from urllib.parse import urlencode
-except ImportError:
-    from urlparse import urlencode
-
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
@@ -28,14 +23,13 @@ class BaseTest(TestCase):
         self.test_user = UserModel.objects.create_user("test_user", "test@example.com", "123456")
         self.dev_user = UserModel.objects.create_user("dev_user", "dev@example.com", "123456")
 
-        self.application = Application(
+        self.application = Application.objects.create(
             name="Test Application",
             redirect_uris="http://localhost http://example.com http://example.org",
             user=self.dev_user,
             client_type=Application.CLIENT_CONFIDENTIAL,
             authorization_grant_type=Application.GRANT_AUTHORIZATION_CODE,
         )
-        self.application.save()
 
         oauth2_settings._SCOPES = ["read", "write"]
 
@@ -56,13 +50,13 @@ class TestRevocationView(BaseTest):
             expires=timezone.now() + datetime.timedelta(days=1),
             scope="read write"
         )
-        query_string = urlencode({
+        data = {
             "client_id": self.application.client_id,
             "client_secret": self.application.client_secret,
             "token": tok.token,
-        })
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:revoke-token"), qs=query_string)
-        response = self.client.post(url)
+        }
+        url = reverse("oauth2_provider:revoke-token")
+        response = self.client.post(url, data=data)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b"")
         self.assertFalse(AccessToken.objects.filter(id=tok.id).exists())
@@ -83,13 +77,13 @@ class TestRevocationView(BaseTest):
             scope="read write"
         )
 
-        query_string = urlencode({
+        data = {
             "client_id": public_app.client_id,
             "token": tok.token,
-        })
+        }
 
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:revoke-token"), qs=query_string)
-        response = self.client.post(url)
+        url = reverse("oauth2_provider:revoke-token")
+        response = self.client.post(url, data=data)
         self.assertEqual(response.status_code, 200)
 
     def test_revoke_access_token_with_hint(self):
@@ -102,14 +96,14 @@ class TestRevocationView(BaseTest):
             expires=timezone.now() + datetime.timedelta(days=1),
             scope="read write"
         )
-        query_string = urlencode({
+        data = {
             "client_id": self.application.client_id,
             "client_secret": self.application.client_secret,
             "token": tok.token,
             "token_type_hint": "access_token"
-        })
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:revoke-token"), qs=query_string)
-        response = self.client.post(url)
+        }
+        url = reverse("oauth2_provider:revoke-token")
+        response = self.client.post(url, data=data)
         self.assertEqual(response.status_code, 200)
         self.assertFalse(AccessToken.objects.filter(id=tok.id).exists())
 
@@ -121,14 +115,14 @@ class TestRevocationView(BaseTest):
             scope="read write"
         )
         # invalid hint should have no effect
-        query_string = urlencode({
+        data = {
             "client_id": self.application.client_id,
             "client_secret": self.application.client_secret,
             "token": tok.token,
             "token_type_hint": "bad_hint"
-        })
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:revoke-token"), qs=query_string)
-        response = self.client.post(url)
+        }
+        url = reverse("oauth2_provider:revoke-token")
+        response = self.client.post(url, data=data)
         self.assertEqual(response.status_code, 200)
         self.assertFalse(AccessToken.objects.filter(id=tok.id).exists())
 
@@ -143,13 +137,13 @@ class TestRevocationView(BaseTest):
             user=self.test_user, token="999999999",
             application=self.application, access_token=tok
         )
-        query_string = urlencode({
+        data = {
             "client_id": self.application.client_id,
             "client_secret": self.application.client_secret,
             "token": rtok.token,
-        })
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:revoke-token"), qs=query_string)
-        response = self.client.post(url)
+        }
+        url = reverse("oauth2_provider:revoke-token")
+        response = self.client.post(url, data=data)
         self.assertEqual(response.status_code, 200)
         refresh_token = RefreshToken.objects.filter(id=rtok.id).first()
         self.assertIsNotNone(refresh_token.revoked)
@@ -167,13 +161,13 @@ class TestRevocationView(BaseTest):
             application=self.application, access_token=tok
         )
         for token in (tok.token, rtok.token):
-            query_string = urlencode({
+            data = {
                 "client_id": self.application.client_id,
                 "client_secret": self.application.client_secret,
                 "token": token,
-            })
-            url = "{url}?{qs}".format(url=reverse("oauth2_provider:revoke-token"), qs=query_string)
-            response = self.client.post(url)
+            }
+            url = reverse("oauth2_provider:revoke-token")
+            response = self.client.post(url, data=data)
             self.assertEqual(response.status_code, 200)
 
         self.assertFalse(AccessToken.objects.filter(id=tok.id).exists())
@@ -195,13 +189,13 @@ class TestRevocationView(BaseTest):
             scope="read write"
         )
 
-        query_string = urlencode({
+        data = {
             "client_id": self.application.client_id,
             "client_secret": self.application.client_secret,
             "token": tok.token,
             "token_type_hint": "refresh_token"
-        })
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:revoke-token"), qs=query_string)
-        response = self.client.post(url)
+        }
+        url = reverse("oauth2_provider:revoke-token")
+        response = self.client.post(url, data=data)
         self.assertEqual(response.status_code, 200)
         self.assertFalse(AccessToken.objects.filter(id=tok.id).exists())
