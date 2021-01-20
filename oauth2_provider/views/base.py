@@ -176,7 +176,7 @@ class AuthorizationView(BaseAuthorizationView, FormView):
 
         uri_query = urllib.parse.urlparse(self.request.get_raw_uri()).query
         uri_query_params = dict(
-            urllib.parse.parse_qsl(uri_query, keep_blank_values=True, strict_parsing=True)
+            urllib.parse.parse_qsl(uri_query, keep_blank_values=True, strict_parsing=False)
         )
 
         kwargs["application"] = application
