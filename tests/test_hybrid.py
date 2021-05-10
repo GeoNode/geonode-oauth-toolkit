@@ -3,20 +3,25 @@ import datetime
 import json
 from urllib.parse import parse_qs, urlencode, urlparse
 
+import pytest
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
+from jwcrypto import jwt
 from oauthlib.oauth2.rfc6749 import errors as oauthlib_errors
 
 from oauth2_provider.models import (
-    get_access_token_model, get_application_model,
-    get_grant_model, get_refresh_token_model
+    get_access_token_model,
+    get_application_model,
+    get_grant_model,
+    get_refresh_token_model,
 )
-from oauth2_provider.settings import oauth2_settings
-from oauth2_provider.views import ProtectedResourceView
+from oauth2_provider.oauth2_validators import OAuth2Validator
+from oauth2_provider.views import ProtectedResourceView, ScopedProtectedResourceView
 
-from .utils import get_basic_auth_header
+from . import presets
+from .utils import get_basic_auth_header, spy_on
 
 
 Application = get_application_model()
@@ -32,13 +37,21 @@ class ResourceView(ProtectedResourceView):
         return "This is a protected resource"
 
 
+class ScopedResourceView(ScopedProtectedResourceView):
+    required_scopes = ["read"]
+
+    def get(self, request, *args, **kwargs):
+        return "This is a protected resource"
+
+
+@pytest.mark.usefixtures("oauth2_settings")
 class BaseTest(TestCase):
     def setUp(self):
         self.factory = RequestFactory()
         self.hy_test_user = UserModel.objects.create_user("hy_test_user", "test_hy@example.com", "123456")
         self.hy_dev_user = UserModel.objects.create_user("hy_dev_user", "dev_hy@example.com", "123456")
 
-        oauth2_settings.ALLOWED_REDIRECT_URI_SCHEMES = ["http", "custom-scheme"]
+        self.oauth2_settings.ALLOWED_REDIRECT_URI_SCHEMES = ["http", "custom-scheme"]
 
         self.application = Application(
             name="Hybrid Test Application",
@@ -48,16 +61,9 @@ class BaseTest(TestCase):
             user=self.hy_dev_user,
             client_type=Application.CLIENT_CONFIDENTIAL,
             authorization_grant_type=Application.GRANT_OPENID_HYBRID,
+            algorithm=Application.RS256_ALGORITHM,
         )
         self.application.save()
-
-        oauth2_settings._SCOPES = ["read", "write", "openid"]
-        oauth2_settings._DEFAULT_SCOPES = ["read", "write"]
-        oauth2_settings.SCOPES = {
-            "read": "Reading scope",
-            "write": "Writing scope",
-            "openid": "OpenID connect"
-        }
 
     def tearDown(self):
         self.application.delete()
@@ -65,6 +71,7 @@ class BaseTest(TestCase):
         self.hy_dev_user.delete()
 
 
+@pytest.mark.oauth2_settings(presets.OIDC_SETTINGS_RW)
 class TestRegressionIssue315Hybrid(BaseTest):
     """
     Test to avoid regression for the issue 315: request object
@@ -73,13 +80,15 @@ class TestRegressionIssue315Hybrid(BaseTest):
 
     def test_request_is_not_overwritten_code_token(self):
         self.client.login(username="hy_test_user", password="123456")
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code token",
-            "state": "random_state_string",
-            "scope": "openid read write",
-            "redirect_uri": "http://example.org",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code token",
+                "state": "random_state_string",
+                "scope": "openid read write",
+                "redirect_uri": "http://example.org",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
         response = self.client.get(url)
@@ -88,14 +97,16 @@ class TestRegressionIssue315Hybrid(BaseTest):
 
     def test_request_is_not_overwritten_code_id_token(self):
         self.client.login(username="hy_test_user", password="123456")
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code id_token",
-            "state": "random_state_string",
-            "scope": "openid read write",
-            "redirect_uri": "http://example.org",
-            "nonce": "nonce",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code id_token",
+                "state": "random_state_string",
+                "scope": "openid read write",
+                "redirect_uri": "http://example.org",
+                "nonce": "nonce",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
         response = self.client.get(url)
@@ -104,14 +115,16 @@ class TestRegressionIssue315Hybrid(BaseTest):
 
     def test_request_is_not_overwritten_code_id_token_token(self):
         self.client.login(username="hy_test_user", password="123456")
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code id_token token",
-            "state": "random_state_string",
-            "scope": "openid read write",
-            "redirect_uri": "http://example.org",
-            "nonce": "nonce",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code id_token token",
+                "state": "random_state_string",
+                "scope": "openid read write",
+                "redirect_uri": "http://example.org",
+                "nonce": "nonce",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
         response = self.client.get(url)
@@ -119,6 +132,7 @@ class TestRegressionIssue315Hybrid(BaseTest):
         assert "request" not in response.context_data
 
 
+@pytest.mark.oauth2_settings(presets.OIDC_SETTINGS_RW)
 class TestHybridView(BaseTest):
     def test_skip_authorization_completely(self):
         """
@@ -128,13 +142,15 @@ class TestHybridView(BaseTest):
         self.application.skip_authorization = True
         self.application.save()
 
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code",
-            "state": "random_state_string",
-            "scope": "read write",
-            "redirect_uri": "http://example.org",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code",
+                "state": "random_state_string",
+                "scope": "read write",
+                "redirect_uri": "http://example.org",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
         response = self.client.get(url)
@@ -148,13 +164,15 @@ class TestHybridView(BaseTest):
         self.application.skip_authorization = True
         self.application.save()
 
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code",
-            "state": "random_state_string",
-            "scope": "openid",
-            "redirect_uri": "http://example.org",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code",
+                "state": "random_state_string",
+                "scope": "openid",
+                "redirect_uri": "http://example.org",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
         response = self.client.get(url)
@@ -166,17 +184,19 @@ class TestHybridView(BaseTest):
         """
         self.client.login(username="hy_test_user", password="123456")
 
-        query_string = urlencode({
-            "client_id": "fakeclientid",
-            "response_type": "code",
-        })
+        query_string = urlencode(
+            {
+                "client_id": "fakeclientid",
+                "response_type": "code",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
         response = self.client.get(url)
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
             response.context_data["url"],
-            "?error=invalid_request&error_description=Invalid+client_id+parameter+value."
+            "?error=invalid_request&error_description=Invalid+client_id+parameter+value.",
         )
 
     def test_pre_auth_valid_client(self):
@@ -185,13 +205,15 @@ class TestHybridView(BaseTest):
         """
         self.client.login(username="hy_test_user", password="123456")
 
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code id_token",
-            "state": "random_state_string",
-            "scope": "read write",
-            "redirect_uri": "http://example.org",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code id_token",
+                "state": "random_state_string",
+                "scope": "read write",
+                "redirect_uri": "http://example.org",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
         response = self.client.get(url)
@@ -212,14 +234,16 @@ class TestHybridView(BaseTest):
         """
         self.client.login(username="hy_test_user", password="123456")
 
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code id_token",
-            "state": "random_state_string",
-            "scope": "openid",
-            "redirect_uri": "http://example.org",
-            "nonce": "nonce",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code id_token",
+                "state": "random_state_string",
+                "scope": "openid",
+                "redirect_uri": "http://example.org",
+                "nonce": "nonce",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
         response = self.client.get(url)
@@ -241,13 +265,15 @@ class TestHybridView(BaseTest):
         """
         self.client.login(username="hy_test_user", password="123456")
 
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code id_token",
-            "state": "random_state_string",
-            "scope": "read write",
-            "redirect_uri": "custom-scheme://example.com",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code id_token",
+                "state": "random_state_string",
+                "scope": "read write",
+                "redirect_uri": "custom-scheme://example.com",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
         response = self.client.get(url)
@@ -264,20 +290,23 @@ class TestHybridView(BaseTest):
 
     def test_pre_auth_approval_prompt(self):
         tok = AccessToken.objects.create(
-            user=self.hy_test_user, token="1234567890",
+            user=self.hy_test_user,
+            token="1234567890",
             application=self.application,
             expires=timezone.now() + datetime.timedelta(days=1),
-            scope="read write"
+            scope="read write",
         )
         self.client.login(username="hy_test_user", password="123456")
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code id_token",
-            "state": "random_state_string",
-            "scope": "read write",
-            "redirect_uri": "http://example.org",
-            "approval_prompt": "auto",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code id_token",
+                "state": "random_state_string",
+                "scope": "read write",
+                "redirect_uri": "http://example.org",
+                "approval_prompt": "auto",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
         response = self.client.get(url)
         self.assertEqual(response.status_code, 302)
@@ -288,44 +317,50 @@ class TestHybridView(BaseTest):
         self.assertEqual(response.status_code, 200)
 
     def test_pre_auth_approval_prompt_default(self):
-        oauth2_settings.REQUEST_APPROVAL_PROMPT = "force"
-        self.assertEqual(oauth2_settings.REQUEST_APPROVAL_PROMPT, "force")
+        self.oauth2_settings.REQUEST_APPROVAL_PROMPT = "force"
+        self.assertEqual(self.oauth2_settings.REQUEST_APPROVAL_PROMPT, "force")
 
         AccessToken.objects.create(
-            user=self.hy_test_user, token="1234567890",
+            user=self.hy_test_user,
+            token="1234567890",
             application=self.application,
             expires=timezone.now() + datetime.timedelta(days=1),
-            scope="read write"
+            scope="read write",
         )
         self.client.login(username="hy_test_user", password="123456")
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code id_token",
-            "state": "random_state_string",
-            "scope": "read write",
-            "redirect_uri": "http://example.org",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code id_token",
+                "state": "random_state_string",
+                "scope": "read write",
+                "redirect_uri": "http://example.org",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
 
     def test_pre_auth_approval_prompt_default_override(self):
-        oauth2_settings.REQUEST_APPROVAL_PROMPT = "auto"
+        self.oauth2_settings.REQUEST_APPROVAL_PROMPT = "auto"
 
         AccessToken.objects.create(
-            user=self.hy_test_user, token="1234567890",
+            user=self.hy_test_user,
+            token="1234567890",
             application=self.application,
             expires=timezone.now() + datetime.timedelta(days=1),
-            scope="read write"
+            scope="read write",
         )
         self.client.login(username="hy_test_user", password="123456")
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code",
-            "state": "random_state_string",
-            "scope": "read write",
-            "redirect_uri": "http://example.org",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code",
+                "state": "random_state_string",
+                "scope": "read write",
+                "redirect_uri": "http://example.org",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
         response = self.client.get(url)
         self.assertEqual(response.status_code, 302)
@@ -336,10 +371,12 @@ class TestHybridView(BaseTest):
         """
         self.client.login(username="hy_test_user", password="123456")
 
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code id_token",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code id_token",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
         response = self.client.get(url)
@@ -354,11 +391,13 @@ class TestHybridView(BaseTest):
         """
         self.client.login(username="hy_test_user", password="123456")
 
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code",
-            "redirect_uri": "http://forbidden.it",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code",
+                "redirect_uri": "http://forbidden.it",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
         response = self.client.get(url)
@@ -370,10 +409,12 @@ class TestHybridView(BaseTest):
         """
         self.client.login(username="hy_test_user", password="123456")
 
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "WRONG",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "WRONG",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
         response = self.client.get(url)
@@ -753,6 +794,7 @@ class TestHybridView(BaseTest):
         self.assertEqual(response.status_code, 400)
 
 
+@pytest.mark.oauth2_settings(presets.OIDC_SETTINGS_RW)
 class TestHybridTokenView(BaseTest):
     def get_auth(self, scope="read write"):
         """
@@ -782,7 +824,7 @@ class TestHybridTokenView(BaseTest):
         token_request_data = {
             "grant_type": "authorization_code",
             "code": authorization_code,
-            "redirect_uri": "http://example.org"
+            "redirect_uri": "http://example.org",
         }
         auth_headers = get_basic_auth_header(self.application.client_id, self.application.client_secret)
 
@@ -792,7 +834,7 @@ class TestHybridTokenView(BaseTest):
         content = json.loads(response.content.decode("utf-8"))
         self.assertEqual(content["token_type"], "Bearer")
         self.assertEqual(content["scope"], "read write")
-        self.assertEqual(content["expires_in"], oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
+        self.assertEqual(content["expires_in"], self.oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
 
     def test_basic_auth_bad_authcode(self):
         """
@@ -803,7 +845,7 @@ class TestHybridTokenView(BaseTest):
         token_request_data = {
             "grant_type": "authorization_code",
             "code": "BLAH",
-            "redirect_uri": "http://example.org"
+            "redirect_uri": "http://example.org",
         }
         auth_headers = get_basic_auth_header(self.application.client_id, self.application.client_secret)
 
@@ -816,11 +858,7 @@ class TestHybridTokenView(BaseTest):
         """
         self.client.login(username="hy_test_user", password="123456")
 
-        token_request_data = {
-            "grant_type": "UNKNOWN",
-            "code": "BLAH",
-            "redirect_uri": "http://example.org"
-        }
+        token_request_data = {"grant_type": "UNKNOWN", "code": "BLAH", "redirect_uri": "http://example.org"}
         auth_headers = get_basic_auth_header(self.application.client_id, self.application.client_secret)
 
         response = self.client.post(reverse("oauth2_provider:token"), data=token_request_data, **auth_headers)
@@ -832,14 +870,19 @@ class TestHybridTokenView(BaseTest):
         """
         self.client.login(username="hy_test_user", password="123456")
         g = Grant(
-            application=self.application, user=self.hy_test_user, code="BLAH",
-            expires=timezone.now(), redirect_uri="", scope="")
+            application=self.application,
+            user=self.hy_test_user,
+            code="BLAH",
+            expires=timezone.now(),
+            redirect_uri="",
+            scope="",
+        )
         g.save()
 
         token_request_data = {
             "grant_type": "authorization_code",
             "code": "BLAH",
-            "redirect_uri": "http://example.org"
+            "redirect_uri": "http://example.org",
         }
         auth_headers = get_basic_auth_header(self.application.client_id, self.application.client_secret)
 
@@ -856,7 +899,7 @@ class TestHybridTokenView(BaseTest):
         token_request_data = {
             "grant_type": "authorization_code",
             "code": authorization_code,
-            "redirect_uri": "http://example.org"
+            "redirect_uri": "http://example.org",
         }
         auth_headers = get_basic_auth_header(self.application.client_id, "BOOM!")
 
@@ -873,7 +916,7 @@ class TestHybridTokenView(BaseTest):
         token_request_data = {
             "grant_type": "authorization_code",
             "code": authorization_code,
-            "redirect_uri": "http://example.org"
+            "redirect_uri": "http://example.org",
         }
 
         user_pass = "{0}:{1}".format(self.application.client_id, self.application.client_secret)
@@ -906,7 +949,7 @@ class TestHybridTokenView(BaseTest):
         content = json.loads(response.content.decode("utf-8"))
         self.assertEqual(content["token_type"], "Bearer")
         self.assertEqual(content["scope"], "read write")
-        self.assertEqual(content["expires_in"], oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
+        self.assertEqual(content["expires_in"], self.oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
 
     def test_public(self):
         """
@@ -922,7 +965,7 @@ class TestHybridTokenView(BaseTest):
             "grant_type": "authorization_code",
             "code": authorization_code,
             "redirect_uri": "http://example.org",
-            "client_id": self.application.client_id
+            "client_id": self.application.client_id,
         }
 
         response = self.client.post(reverse("oauth2_provider:token"), data=token_request_data)
@@ -931,7 +974,7 @@ class TestHybridTokenView(BaseTest):
         content = json.loads(response.content.decode("utf-8"))
         self.assertEqual(content["token_type"], "Bearer")
         self.assertEqual(content["scope"], "read write")
-        self.assertEqual(content["expires_in"], oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
+        self.assertEqual(content["expires_in"], self.oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
 
     def test_id_token_public(self):
         """
@@ -959,7 +1002,7 @@ class TestHybridTokenView(BaseTest):
         self.assertEqual(content["scope"], "openid")
         self.assertIn("access_token", content)
         self.assertIn("id_token", content)
-        self.assertEqual(content["expires_in"], oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
+        self.assertEqual(content["expires_in"], self.oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
 
     def test_malicious_redirect_uri(self):
         """
@@ -976,7 +1019,7 @@ class TestHybridTokenView(BaseTest):
             "grant_type": "authorization_code",
             "code": authorization_code,
             "redirect_uri": "/../",
-            "client_id": self.application.client_id
+            "client_id": self.application.client_id,
         }
 
         response = self.client.post(reverse("oauth2_provider:token"), data=token_request_data)
@@ -1008,7 +1051,7 @@ class TestHybridTokenView(BaseTest):
         token_request_data = {
             "grant_type": "authorization_code",
             "code": authorization_code,
-            "redirect_uri": "http://example.org?foo=bar"
+            "redirect_uri": "http://example.org?foo=bar",
         }
         auth_headers = get_basic_auth_header(self.application.client_id, self.application.client_secret)
 
@@ -1018,7 +1061,7 @@ class TestHybridTokenView(BaseTest):
         content = json.loads(response.content.decode("utf-8"))
         self.assertEqual(content["token_type"], "Bearer")
         self.assertEqual(content["scope"], "openid read write")
-        self.assertEqual(content["expires_in"], oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
+        self.assertEqual(content["expires_in"], self.oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
 
     def test_code_exchange_fails_when_redirect_uri_does_not_match(self):
         """
@@ -1043,7 +1086,7 @@ class TestHybridTokenView(BaseTest):
         token_request_data = {
             "grant_type": "authorization_code",
             "code": authorization_code,
-            "redirect_uri": "http://example.org?foo=baraa"
+            "redirect_uri": "http://example.org?foo=baraa",
         }
         auth_headers = get_basic_auth_header(self.application.client_id, self.application.client_secret)
 
@@ -1078,7 +1121,7 @@ class TestHybridTokenView(BaseTest):
         token_request_data = {
             "grant_type": "authorization_code",
             "code": authorization_code,
-            "redirect_uri": "http://example.com?bar=baz&foo=bar"
+            "redirect_uri": "http://example.com?bar=baz&foo=bar",
         }
         auth_headers = get_basic_auth_header(self.application.client_id, self.application.client_secret)
 
@@ -1088,7 +1131,7 @@ class TestHybridTokenView(BaseTest):
         content = json.loads(response.content.decode("utf-8"))
         self.assertEqual(content["token_type"], "Bearer")
         self.assertEqual(content["scope"], "openid read write")
-        self.assertEqual(content["expires_in"], oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
+        self.assertEqual(content["expires_in"], self.oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
 
     def test_id_token_code_exchange_succeed_when_redirect_uri_match_with_multiple_query_params(self):
         """
@@ -1127,9 +1170,10 @@ class TestHybridTokenView(BaseTest):
         self.assertEqual(content["scope"], "openid")
         self.assertIn("access_token", content)
         self.assertIn("id_token", content)
-        self.assertEqual(content["expires_in"], oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
+        self.assertEqual(content["expires_in"], self.oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
 
 
+@pytest.mark.oauth2_settings(presets.OIDC_SETTINGS_RW)
 class TestHybridProtectedResource(BaseTest):
     def test_resource_access_allowed(self):
         self.client.login(username="hy_test_user", password="123456")
@@ -1151,7 +1195,7 @@ class TestHybridProtectedResource(BaseTest):
         token_request_data = {
             "grant_type": "authorization_code",
             "code": authorization_code,
-            "redirect_uri": "http://example.org"
+            "redirect_uri": "http://example.org",
         }
         auth_headers = get_basic_auth_header(self.application.client_id, self.application.client_secret)
 
@@ -1221,6 +1265,11 @@ class TestHybridProtectedResource(BaseTest):
         response = view(request)
         self.assertEqual(response, "This is a protected resource")
 
+        # If the resource requires more scopes than we requested, we should get an error
+        view = ScopedResourceView.as_view()
+        response = view(request)
+        self.assertEqual(response.status_code, 403)
+
     def test_resource_access_deny(self):
         auth_headers = {
             "HTTP_AUTHORIZATION": "Bearer " + "faketoken",
@@ -1233,21 +1282,22 @@ class TestHybridProtectedResource(BaseTest):
         self.assertEqual(response.status_code, 403)
 
 
+@pytest.mark.oauth2_settings(presets.OIDC_SETTINGS_RO)
 class TestDefaultScopesHybrid(BaseTest):
-
     def test_pre_auth_default_scopes(self):
         """
         Test response for a valid client_id with response_type: code using default scopes
         """
         self.client.login(username="hy_test_user", password="123456")
-        oauth2_settings._DEFAULT_SCOPES = ["read"]
 
-        query_string = urlencode({
-            "client_id": self.application.client_id,
-            "response_type": "code token",
-            "state": "random_state_string",
-            "redirect_uri": "http://example.org",
-        })
+        query_string = urlencode(
+            {
+                "client_id": self.application.client_id,
+                "response_type": "code token",
+                "state": "random_state_string",
+                "redirect_uri": "http://example.org",
+            }
+        )
         url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
 
         response = self.client.get(url)
@@ -1261,4 +1311,121 @@ class TestDefaultScopesHybrid(BaseTest):
         self.assertEqual(form["state"].value(), "random_state_string")
         self.assertEqual(form["scope"].value(), "read")
         self.assertEqual(form["client_id"].value(), self.application.client_id)
-        oauth2_settings._DEFAULT_SCOPES = ["read", "write"]
+
+
+@pytest.mark.django_db
+@pytest.mark.oauth2_settings(presets.OIDC_SETTINGS_RW)
+def test_id_token_nonce_in_token_response(oauth2_settings, test_user, hybrid_application, client, oidc_key):
+    client.force_login(test_user)
+    auth_rsp = client.post(
+        reverse("oauth2_provider:authorize"),
+        data={
+            "client_id": hybrid_application.client_id,
+            "state": "random_state_string",
+            "scope": "openid",
+            "redirect_uri": "http://example.org",
+            "response_type": "code id_token",
+            "nonce": "random_nonce_string",
+            "allow": True,
+        },
+    )
+    assert auth_rsp.status_code == 302
+    auth_data = parse_qs(urlparse(auth_rsp["Location"]).fragment)
+    assert "code" in auth_data
+    assert "id_token" in auth_data
+    # Decode the id token - is the nonce correct
+    jwt_token = jwt.JWT(key=oidc_key, jwt=auth_data["id_token"][0])
+    claims = json.loads(jwt_token.claims)
+    assert "nonce" in claims
+    assert claims["nonce"] == "random_nonce_string"
+    code = auth_data["code"][0]
+    client.logout()
+    # Get the token response using the code
+    token_rsp = client.post(
+        reverse("oauth2_provider:token"),
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "http://example.org",
+            "client_id": hybrid_application.client_id,
+            "client_secret": hybrid_application.client_secret,
+            "scope": "openid",
+        },
+    )
+    assert token_rsp.status_code == 200
+    token_data = token_rsp.json()
+    assert "id_token" in token_data
+    # The nonce should be present in this id token also
+    jwt_token = jwt.JWT(key=oidc_key, jwt=token_data["id_token"])
+    claims = json.loads(jwt_token.claims)
+    assert "nonce" in claims
+    assert claims["nonce"] == "random_nonce_string"
+
+
+@pytest.mark.django_db
+@pytest.mark.oauth2_settings(presets.OIDC_SETTINGS_RW)
+def test_claims_passed_to_code_generation(
+    oauth2_settings, test_user, hybrid_application, client, mocker, oidc_key
+):
+    # Add a spy on to OAuth2Validator.finalize_id_token
+    mocker.patch.object(
+        OAuth2Validator,
+        "finalize_id_token",
+        spy_on(OAuth2Validator.finalize_id_token),
+    )
+    claims = {"id_token": {"email": {"essential": True}}}
+    client.force_login(test_user)
+    auth_form_rsp = client.get(
+        reverse("oauth2_provider:authorize"),
+        data={
+            "client_id": hybrid_application.client_id,
+            "state": "random_state_string",
+            "scope": "openid",
+            "redirect_uri": "http://example.org",
+            "response_type": "code id_token",
+            "nonce": "random_nonce_string",
+            "claims": json.dumps(claims),
+        },
+    )
+    # Check that claims has made it in to the form to be submitted
+    assert auth_form_rsp.status_code == 200
+    form_initial_data = auth_form_rsp.context_data["form"].initial
+    assert "claims" in form_initial_data
+    assert json.loads(form_initial_data["claims"]) == claims
+    # Filter out not specified values
+    form_data = {key: value for key, value in form_initial_data.items() if value is not None}
+    # Now submitting the form (with allow=True) should persist requested claims
+    auth_rsp = client.post(
+        reverse("oauth2_provider:authorize"),
+        data={"allow": True, **form_data},
+    )
+    assert auth_rsp.status_code == 302
+    auth_data = parse_qs(urlparse(auth_rsp["Location"]).fragment)
+    assert "code" in auth_data
+    assert "id_token" in auth_data
+    assert OAuth2Validator.finalize_id_token.spy.call_count == 1
+    oauthlib_request = OAuth2Validator.finalize_id_token.spy.call_args[0][4]
+    assert oauthlib_request.claims == claims
+    assert Grant.objects.get().claims == json.dumps(claims)
+    OAuth2Validator.finalize_id_token.spy.reset_mock()
+
+    # Get the token response using the code
+    client.logout()
+    code = auth_data["code"][0]
+    token_rsp = client.post(
+        reverse("oauth2_provider:token"),
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "http://example.org",
+            "client_id": hybrid_application.client_id,
+            "client_secret": hybrid_application.client_secret,
+            "scope": "openid",
+        },
+    )
+    assert token_rsp.status_code == 200
+    token_data = token_rsp.json()
+    assert "id_token" in token_data
+    assert OAuth2Validator.finalize_id_token.spy.call_count == 1
+    oauthlib_request = OAuth2Validator.finalize_id_token.spy.call_args[0][4]
+    assert oauthlib_request.claims == claims

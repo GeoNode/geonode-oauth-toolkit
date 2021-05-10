@@ -1,14 +1,16 @@
 import json
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urlparse
 
+import pytest
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
-from jwcrypto import jwk, jwt
+from jwcrypto import jwt
 
 from oauth2_provider.models import get_application_model
-from oauth2_provider.settings import oauth2_settings
 from oauth2_provider.views import ProtectedResourceView
+
+from . import presets
 
 
 Application = get_application_model()
@@ -21,6 +23,7 @@ class ResourceView(ProtectedResourceView):
         return "This is a protected resource"
 
 
+@pytest.mark.usefixtures("oauth2_settings")
 class BaseTest(TestCase):
     def setUp(self):
         self.factory = RequestFactory()
@@ -35,36 +38,27 @@ class BaseTest(TestCase):
             authorization_grant_type=Application.GRANT_IMPLICIT,
         )
 
-        oauth2_settings._SCOPES = ["read", "write", "openid"]
-        oauth2_settings._DEFAULT_SCOPES = ["read"]
-        oauth2_settings.SCOPES = {
-            "read": "Reading scope",
-            "write": "Writing scope",
-            "openid": "OpenID connect"
-        }
-        self.key = jwk.JWK.from_pem(oauth2_settings.OIDC_RSA_PRIVATE_KEY.encode("utf8"))
-
     def tearDown(self):
         self.application.delete()
         self.test_user.delete()
         self.dev_user.delete()
 
 
+@pytest.mark.oauth2_settings(presets.DEFAULT_SCOPES_RO)
 class TestImplicitAuthorizationCodeView(BaseTest):
     def test_pre_auth_valid_client_default_scopes(self):
         """
         Test response for a valid client_id with response_type: token and default_scopes
         """
         self.client.login(username="test_user", password="123456")
-        query_string = urlencode({
+        query_data = {
             "client_id": self.application.client_id,
             "response_type": "token",
             "state": "random_state_string",
             "redirect_uri": "http://example.org",
-        })
+        }
 
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
-        response = self.client.get(url)
+        response = self.client.get(reverse("oauth2_provider:authorize"), data=query_data)
         self.assertEqual(response.status_code, 200)
 
         self.assertIn("form", response.context)
@@ -77,16 +71,15 @@ class TestImplicitAuthorizationCodeView(BaseTest):
         """
         self.client.login(username="test_user", password="123456")
 
-        query_string = urlencode({
+        query_data = {
             "client_id": self.application.client_id,
             "response_type": "token",
             "state": "random_state_string",
             "scope": "read write",
             "redirect_uri": "http://example.org",
-        })
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
+        }
 
-        response = self.client.get(url)
+        response = self.client.get(reverse("oauth2_provider:authorize"), data=query_data)
         self.assertEqual(response.status_code, 200)
 
         # check form is in context and form params are valid
@@ -104,13 +97,12 @@ class TestImplicitAuthorizationCodeView(BaseTest):
         """
         self.client.login(username="test_user", password="123456")
 
-        query_string = urlencode({
+        query_data = {
             "client_id": "fakeclientid",
             "response_type": "token",
-        })
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
+        }
 
-        response = self.client.get(url)
+        response = self.client.get(reverse("oauth2_provider:authorize"), data=query_data)
         self.assertEqual(response.status_code, 400)
 
     def test_pre_auth_default_redirect(self):
@@ -119,13 +111,12 @@ class TestImplicitAuthorizationCodeView(BaseTest):
         """
         self.client.login(username="test_user", password="123456")
 
-        query_string = urlencode({
+        query_data = {
             "client_id": self.application.client_id,
             "response_type": "token",
-        })
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
+        }
 
-        response = self.client.get(url)
+        response = self.client.get(reverse("oauth2_provider:authorize"), data=query_data)
         self.assertEqual(response.status_code, 200)
 
         form = response.context["form"]
@@ -137,14 +128,13 @@ class TestImplicitAuthorizationCodeView(BaseTest):
         """
         self.client.login(username="test_user", password="123456")
 
-        query_string = urlencode({
+        query_data = {
             "client_id": self.application.client_id,
             "response_type": "token",
             "redirect_uri": "http://forbidden.it",
-        })
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
+        }
 
-        response = self.client.get(url)
+        response = self.client.get(reverse("oauth2_provider:authorize"), data=query_data)
         self.assertEqual(response.status_code, 400)
 
     def test_post_auth_allow(self):
@@ -176,17 +166,15 @@ class TestImplicitAuthorizationCodeView(BaseTest):
         self.application.skip_authorization = True
         self.application.save()
 
-        query_string = urlencode({
+        query_data = {
             "client_id": self.application.client_id,
             "response_type": "token",
             "state": "random_state_string",
             "scope": "read write",
             "redirect_uri": "http://example.org",
-        })
+        }
 
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
-
-        response = self.client.get(url)
+        response = self.client.get(reverse("oauth2_provider:authorize"), data=query_data)
         self.assertEqual(response.status_code, 302)
         self.assertIn("http://example.org#", response["Location"])
         self.assertIn("access_token=", response["Location"])
@@ -252,6 +240,7 @@ class TestImplicitAuthorizationCodeView(BaseTest):
         self.assertEqual(response.status_code, 400)
 
 
+@pytest.mark.oauth2_settings(presets.DEFAULT_SCOPES_RO)
 class TestImplicitTokenView(BaseTest):
     def test_resource_access_allowed(self):
         self.client.login(username="test_user", password="123456")
@@ -282,7 +271,14 @@ class TestImplicitTokenView(BaseTest):
         self.assertEqual(response, "This is a protected resource")
 
 
+@pytest.mark.usefixtures("oidc_key")
+@pytest.mark.oauth2_settings(presets.OIDC_SETTINGS_RW)
 class TestOpenIDConnectImplicitFlow(BaseTest):
+    def setUp(self):
+        super().setUp()
+        self.application.algorithm = Application.RS256_ALGORITHM
+        self.application.save()
+
     def test_id_token_post_auth_allow(self):
         """
         Test authorization code is given for an allowed request with response_type: id_token
@@ -322,18 +318,16 @@ class TestOpenIDConnectImplicitFlow(BaseTest):
         self.application.skip_authorization = True
         self.application.save()
 
-        query_string = urlencode({
+        query_data = {
             "client_id": self.application.client_id,
             "response_type": "id_token",
             "state": "random_state_string",
             "nonce": "random_nonce_string",
             "scope": "openid",
             "redirect_uri": "http://example.org",
-        })
+        }
 
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
-
-        response = self.client.get(url)
+        response = self.client.get(reverse("oauth2_provider:authorize"), data=query_data)
         self.assertEqual(response.status_code, 302)
         self.assertIn("http://example.org#", response["Location"])
         self.assertNotIn("access_token=", response["Location"])
@@ -356,17 +350,15 @@ class TestOpenIDConnectImplicitFlow(BaseTest):
         self.application.skip_authorization = True
         self.application.save()
 
-        query_string = urlencode({
+        query_data = {
             "client_id": self.application.client_id,
             "response_type": "id_token",
             "state": "random_state_string",
             "scope": "openid",
             "redirect_uri": "http://example.org",
-        })
+        }
 
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
-
-        response = self.client.get(url)
+        response = self.client.get(reverse("oauth2_provider:authorize"), data=query_data)
         self.assertEqual(response.status_code, 302)
         self.assertIn("error=invalid_request", response["Location"])
         self.assertIn("error_description=Request+is+missing+mandatory+nonce+paramete", response["Location"])
@@ -430,18 +422,16 @@ class TestOpenIDConnectImplicitFlow(BaseTest):
         self.application.skip_authorization = True
         self.application.save()
 
-        query_string = urlencode({
+        query_data = {
             "client_id": self.application.client_id,
             "response_type": "id_token token",
             "state": "random_state_string",
             "nonce": "random_nonce_string",
             "scope": "openid",
             "redirect_uri": "http://example.org",
-        })
+        }
 
-        url = "{url}?{qs}".format(url=reverse("oauth2_provider:authorize"), qs=query_string)
-
-        response = self.client.get(url)
+        response = self.client.get(reverse("oauth2_provider:authorize"), data=query_data)
         self.assertEqual(response.status_code, 302)
         self.assertIn("http://example.org#", response["Location"])
         self.assertIn("access_token=", response["Location"])

@@ -80,7 +80,6 @@ INSTALLED_APPS = (
     "django.contrib.staticfiles",
     "django.contrib.admin",
     "django.contrib.messages",
-
     "oauth2_provider",
     "tests",
 )
@@ -89,29 +88,17 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "verbose": {
-            "format": "%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s"
-        },
-        "simple": {
-            "format": "%(levelname)s %(message)s"
-        },
+        "verbose": {"format": "%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s"},
+        "simple": {"format": "%(levelname)s %(message)s"},
     },
-    "filters": {
-        "require_debug_false": {
-            "()": "django.utils.log.RequireDebugFalse"
-        }
-    },
+    "filters": {"require_debug_false": {"()": "django.utils.log.RequireDebugFalse"}},
     "handlers": {
         "mail_admins": {
             "level": "ERROR",
             "filters": ["require_debug_false"],
-            "class": "django.utils.log.AdminEmailHandler"
+            "class": "django.utils.log.AdminEmailHandler",
         },
-        "console": {
-            "level": "DEBUG",
-            "class": "logging.StreamHandler",
-            "formatter": "simple"
-        },
+        "console": {"level": "DEBUG", "class": "logging.StreamHandler", "formatter": "simple"},
         "null": {
             "level": "DEBUG",
             "class": "logging.NullHandler",
@@ -128,7 +115,7 @@ LOGGING = {
             "level": "DEBUG",
             "propagate": True,
         },
-    }
+    },
 }
 
 OIDC_RSA_PRIVATE_KEY = """-----BEGIN RSA PRIVATE KEY-----
@@ -146,12 +133,6 @@ ZamQgxjcvJ85FvymS1aqW45KwNysIlzHjFo2jMlMf7dN6kobbPMQftDENLJvLWIT
 qoFyGycdsxZiPAIyZSECQQCZFn3Dl6hnJxWZH8Fsa9hj79kZ/WVkIXGmtdgt0fNr
 dTnvCVtA59ne4LEVie/PMH/odQWY0SxVm/76uBZv/1vY
 -----END RSA PRIVATE KEY-----"""
-
-OAUTH2_PROVIDER = {
-    "OIDC_ISS_ENDPOINT": "http://localhost",
-    "OIDC_USERINFO_ENDPOINT": "http://localhost/userinfo/",
-    "OIDC_RSA_PRIVATE_KEY": OIDC_RSA_PRIVATE_KEY,
-}
 
 OAUTH2_PROVIDER_ACCESS_TOKEN_MODEL = "oauth2_provider.AccessToken"
 OAUTH2_PROVIDER_APPLICATION_MODEL = "oauth2_provider.Application"

@@ -1,12 +1,18 @@
 # flake8: noqa
+from .base import AuthorizationView, TokenView, RevokeTokenView  # isort:skip
 from .application import (
-    ApplicationDelete, ApplicationDetail, ApplicationList,
-    ApplicationRegistration, ApplicationUpdate
+    ApplicationDelete,
+    ApplicationDetail,
+    ApplicationList,
+    ApplicationRegistration,
+    ApplicationUpdate,
 )
-from .base import AuthorizationView, RevokeTokenView, TokenView
 from .generic import (
-    ProtectedResourceView, ReadWriteScopedResourceView,
-    ScopedProtectedResourceView
+    ClientProtectedResourceView,
+    ClientProtectedScopedResourceView,
+    ProtectedResourceView,
+    ReadWriteScopedResourceView,
+    ScopedProtectedResourceView,
 )
 from .introspect import IntrospectTokenView
 from .oidc import ConnectDiscoveryInfoView, JwksInfoView, UserInfoView

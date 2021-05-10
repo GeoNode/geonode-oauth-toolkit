@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-<!-- 
+<!--
 ## [unreleased]
 ### Added
 ### Changed
@@ -14,11 +14,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
   -->
 
-## [1.3.1] unreleased
+## [unreleased]
+* Remove support for Django 3.0
+* Add support for Django 3.2
+
+### Added
+* #712, #636, #808. Calls to `django.contrib.auth.authenticate()` now pass a `request`
+  to provide compatibility with backends that need one.
+
+### Fixed
+* #524 Restrict usage of timezone aware expire dates to Django projects with USE_TZ set to True.
+* #955 Avoid doubling of `oauth2_provider` urls mountpath in json response for OIDC view `ConnectDiscoveryInfoView`.
+  Breaks existing OIDC discovery output
+* #953 Allow loopback redirect URIs with random ports using http scheme, localhost address and no explicit port
+  configuration in the allowed redirect_uris for Oauth2 Applications (RFC8252)
+
+## [2.2.0] 2021-05-10
+Aligned to [django-oauth-toolkit 1.5.0](https://github.com/jazzband/django-oauth-toolkit/pull/947)
+
+### Added
+* #915 Add optional OpenID Connect support.
+
+### Changed
+* #942 Help via defunct Google group replaced with using GitHub issues
+
+## [2.1.1] 2021-03-12
+
+### Changed
+* #925 OAuth2TokenMiddleware converted to new style middleware, and no longer extends MiddlewareMixin.
+
+### Removed
+* #936 Remove support for Python 3.5
+
+## [2.1.0] 2021-02-08
+
+### Added
+* #917 Documentation improvement for Access Token expiration.
+* #916 (for DOT contributors) Added `tox -e livedocs` which launches a local web server on `locahost:8000`
+  to display Sphinx documentation with live updates as you edit.
+* #891 (for DOT contributors) Added [details](https://django-oauth-toolkit.readthedocs.io/en/latest/contributing.html)
+  on how best to contribute to this project.
+* #884 Added support for Python 3.9
+* #898 Added the ability to customize classes for django admin
+* #690 Added pt-PT translations to HTML templates. This enables adding additional translations.
+
+### Fixed
+* #906 Made token revocation not apply a limit to the `select_for_update` statement (impacts Oracle 12c database).
+* #903 Disable `redirect_uri` field length limit for `AbstractGrant`
+
+## [1.3.3] 2020-10-16
+
+### Added
+* added `select_related` in intospect view for better query performance
+* #831 Authorization token creation now can receive an expire date
+* #831 Added a method to override Grant creation
+* #825 Bump oauthlib to 3.1.0 to introduce PKCE
+* Support for Django 3.1
+
+### Fixed
+* #847: Fix inappropriate message when response from authentication server is not OK.
+
+### Changed
+* few smaller improvements to remove older django version compatibility #830, #861, #862, #863
+
+## [1.3.2] 2020-03-24
+
+### Fixed
+* Fixes: 1.3.1 inadvertently uploaded to pypi with an extra migration (0003...) from a dev branch.
+
+## [1.3.1] 2020-03-23
+
+### Added
+* #725: HTTP Basic Auth support for introspection (Fix issue #709)
+
 ### Fixed
 * #812: Reverts #643 pass wrong request object to authenticate function.
 * Fix concurrency issue with refresh token requests (#[810](https://github.com/jazzband/django-oauth-toolkit/pull/810))
 * #817: Reverts #734 tutorial documentation error.
+
 
 ## [1.3.0] 2020-03-02
 
