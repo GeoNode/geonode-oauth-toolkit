@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * #953 Allow loopback redirect URIs with random ports using http scheme, localhost address and no explicit port
   configuration in the allowed redirect_uris for Oauth2 Applications (RFC8252)
 
+## [2.2.1] 2021-05-28
+Fixed [unique UUID gives throws error when running migrations](https://github.com/GeoNode/geonode-oauth-toolkit/issues/6)
+
 ## [2.2.0] 2021-05-10
 Aligned to [django-oauth-toolkit 1.5.0](https://github.com/jazzband/django-oauth-toolkit/pull/947)
 
