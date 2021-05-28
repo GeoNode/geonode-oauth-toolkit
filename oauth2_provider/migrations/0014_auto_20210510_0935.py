@@ -28,7 +28,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='idtoken',
             name='jti',
-            field=models.UUIDField(default=uuid.uuid4, editable=False, unique=True, verbose_name='JWT Token ID'),
+            field=models.UUIDField(default=uuid.uuid4, editable=False, unique=False, verbose_name='JWT Token ID'),
         ),
         migrations.AlterField(
             model_name='application',
