@@ -1,4 +1,4 @@
-from django.db import migrations
+from django.db import migrations, models
 import uuid
 
 def gen_uuid(apps, schema_editor):
@@ -14,5 +14,11 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.AlterField(
+            model_name='idtoken',
+            name='jti',
+            field=models.UUIDField(default=uuid.uuid4, editable=False,
+                                   unique=True, verbose_name='JWT Token ID'),
+        ),
         migrations.RunPython(gen_uuid, reverse_code=migrations.RunPython.noop),
     ]
