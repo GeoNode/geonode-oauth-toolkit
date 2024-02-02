@@ -20,6 +20,7 @@ from ..scopes import get_scopes_backend
 from ..settings import oauth2_settings
 from ..signals import app_authorized
 from .mixins import OAuthLibMixin
+from django.http import request as django_http_request
 
 
 log = logging.getLogger("oauth2_provider")
@@ -155,10 +156,8 @@ class AuthorizationView(BaseAuthorizationView, FormView):
         # TODO: Cache this!
         application = get_application_model().objects.get(client_id=credentials["client_id"])
 
-        uri_query = urllib.parse.urlparse(self.request.get_raw_uri()).query
-        uri_query_params = dict(
-            urllib.parse.parse_qsl(uri_query, keep_blank_values=True, strict_parsing=False)
-        )
+        uri_query = django_http_request.parse_qsl(django_http_request.urlsplit(request.get_full_path()).query)
+        uri_query_params = dict(uri_query)
 
         kwargs["application"] = application
         kwargs["client_id"] = credentials["client_id"]
