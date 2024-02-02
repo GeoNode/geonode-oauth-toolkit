@@ -20,6 +20,7 @@ from ..scopes import get_scopes_backend
 from ..settings import oauth2_settings
 from ..signals import app_authorized
 from .mixins import OAuthLibMixin
+from django.http import request as django_http_request
 
 
 log = logging.getLogger("oauth2_provider")
